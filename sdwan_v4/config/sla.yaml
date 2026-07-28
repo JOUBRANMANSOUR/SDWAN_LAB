@@ -1,0 +1,43 @@
+schema_version: 3
+utilization_ewma_alpha: 0.25
+policy_ttl_s: 30
+window_size: 8
+minimum_samples: 3
+failed_epochs_before_down: 3
+hold_down_s: 30
+minimum_path_time_s: 20
+switch_improvement_pct: 15
+handshake_max_age_s: 45
+
+profiles:
+  real-time:
+    maximum_rtt_ms: 80
+    maximum_jitter_ms: 20
+    maximum_loss_pct: 1
+    maximum_utilization_pct: 85
+    weights: {rtt: 0.30, jitter: 0.20, loss: 0.20, utilization: 0.20, cost: 0.10}
+  business-critical:
+    maximum_rtt_ms: 120
+    maximum_jitter_ms: 35
+    maximum_loss_pct: 2
+    maximum_utilization_pct: 90
+    weights: {rtt: 0.25, jitter: 0.15, loss: 0.20, utilization: 0.30, cost: 0.10}
+  normal-web:
+    maximum_rtt_ms: 200
+    maximum_jitter_ms: 60
+    maximum_loss_pct: 4
+    maximum_utilization_pct: 92
+    weights: {rtt: 0.15, jitter: 0.10, loss: 0.20, utilization: 0.45, cost: 0.10}
+  bulk:
+    maximum_rtt_ms: 400
+    maximum_jitter_ms: 150
+    maximum_loss_pct: 8
+    maximum_utilization_pct: 95
+    weights: {rtt: 0.05, jitter: 0.05, loss: 0.15, utilization: 0.65, cost: 0.10}
+  unknown:
+    maximum_rtt_ms: 250
+    maximum_jitter_ms: 80
+    maximum_loss_pct: 5
+    maximum_utilization_pct: 95
+    weights: {rtt: 0.30, jitter: 0.15, loss: 0.25, utilization: 0.20, cost: 0.10}
+

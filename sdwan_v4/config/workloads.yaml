@@ -1,0 +1,21 @@
+schema_version: 3
+http:
+  server: node2-h1
+  server_ip: 10.2.0.11
+  clients: [node1-h1, node1-h2, node1-h3]
+  file_size_mb: 200
+  client_counts: [1, 2, 3, 10]
+  path: bb
+  timeout_s: 300
+protocols:
+  iperf3_port: 5201
+  tcp_echo_port: 9000
+  udp_echo_port: 9999
+  dns_port: 53
+  sip_port: 5060
+  quic_port: 443
+  http_port: 80
+  https_port: 443
+  ssh_port: 22
+  ftp_port: 21
+

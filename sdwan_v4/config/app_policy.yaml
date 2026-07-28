@@ -1,0 +1,68 @@
+schema_version: 3
+paths: [mpls, bb, lte]
+path_costs: {mpls: 0.80, bb: 0.20, lte: 1.00}
+
+classes:
+  real-time:
+    preference: [mpls, bb, lte]
+    mode: strict
+    capacity_aware: true
+    preference_penalty: 0.20
+    move_established_tcp_on_brownout: false
+    move_udp_on_final_classification: false
+  business-critical:
+    preference: [mpls, bb, lte]
+    mode: soft
+    capacity_aware: true
+    preference_penalty: 0.20
+    move_established_tcp_on_brownout: false
+    move_udp_on_final_classification: false
+  normal-web:
+    preference: [bb, mpls, lte]
+    mode: soft
+    capacity_aware: true
+    preference_penalty: 0.30
+    move_established_tcp_on_brownout: false
+    move_udp_on_final_classification: false
+  bulk:
+    preference: [bb, lte, mpls]
+    mode: strict
+    capacity_aware: true
+    preference_penalty: 0.25
+    move_established_tcp_on_brownout: false
+    move_udp_on_final_classification: false
+  unknown:
+    preference: [mpls, bb, lte]
+    mode: best-available
+    capacity_aware: false
+    preference_penalty: 0.10
+    move_established_tcp_on_brownout: false
+    move_udp_on_final_classification: false
+
+applications:
+  DNS: real-time
+  SIP: real-time
+  RTP: real-time
+  STUN: real-time
+  Zoom: real-time
+  TeamsCall: real-time
+  SSH: business-critical
+  RDP: business-critical
+  HTTP: normal-web
+  TLS: normal-web
+  QUIC: normal-web
+  HTTP_Connect: normal-web
+  FTP_CONTROL: bulk
+  FTP_DATA: bulk
+  BitTorrent: bulk
+  SMBv1: bulk
+  SMBv23: bulk
+
+categories:
+  Streaming: normal-web
+  Web: normal-web
+  Download-FileTransfer-FileSharing: bulk
+  Collaborative: business-critical
+  VoIP: real-time
+
+unknown_class: unknown

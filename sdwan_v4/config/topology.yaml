@@ -1,0 +1,134 @@
+schema_version: 4
+edge_image: containernet-sdwan-edge-v4:latest
+host_image: containernet-sdwan-host-v4:latest
+
+controller:
+  openflow_host: 127.0.0.1
+  openflow_port: 6633
+  policy_port: 8080
+  edge_port: 8081
+  management_address: 172.30.0.254/24
+  shared_token_env: SDWAN_SHARED_TOKEN
+
+management_network: 172.30.0.0/24
+
+settings:
+  persistent_keepalive_s: 10
+  route_mark_mask: 255
+  terminal_mark_bit: 256
+  provisional_mark_bit: 512
+  emergency_mark_bit: 1024
+  nfqueue_start: 42
+  nfqueue_end: 45
+  nfqueue_maxlen: 4096
+  nfqueue_socket_buffer: 8388608
+  rp_filter: 2
+  probe_interval_s: 5
+  probe_count: 4
+  classifier_fail_mode: open
+  classifier_tcp_packet_budget: 32
+  classifier_udp_packet_budget: 20
+  classifier_inspection_timeout_s: 15
+  classifier_tcp_handshake_timeout_s: 30
+  classifier_tcp_established_timeout_s: 900
+  classifier_tcp_closing_timeout_s: 15
+  classifier_udp_idle_timeout_s: 120
+  classifier_dns_idle_timeout_s: 30
+  classifier_metadata_timeout_s: 60
+  classifier_max_lifetime_s: 3600
+  classifier_max_flows: 8192
+  classifier_overload_circuit_s: 1
+  application_cache_ttl_s: 300
+  application_cache_max_entries: 4096
+  local_blackout_failures: 2
+  drain_timeout_s: 120
+
+underlays:
+  mpls:
+    switch: s1
+    dpid: 1
+    network: 192.168.10.0/24
+    overlay_network: 172.31.10.0/24
+    wireguard_interface: wg-mpls
+    listen_port: 51820
+    route_table: 101
+    mark: 1
+    bandwidth_mbps: 20
+    delay_ms: 4
+    loss_pct: 0
+    jitter_ms: 0.5
+    cost: 0.80
+  bb:
+    switch: s2
+    dpid: 2
+    network: 192.168.20.0/24
+    overlay_network: 172.31.20.0/24
+    wireguard_interface: wg-bb
+    listen_port: 51821
+    route_table: 102
+    mark: 2
+    bandwidth_mbps: 50
+    delay_ms: 25
+    loss_pct: 1
+    jitter_ms: 5
+    cost: 0.20
+  lte:
+    switch: s3
+    dpid: 3
+    network: 192.168.30.0/24
+    overlay_network: 172.31.30.0/24
+    wireguard_interface: wg-lte
+    listen_port: 51822
+    route_table: 103
+    mark: 3
+    bandwidth_mbps: 8
+    delay_ms: 60
+    loss_pct: 2
+    jitter_ms: 15
+    cost: 1.00
+
+hubs:
+  hub1: {address_id: 1, management_ip: 172.30.0.1}
+  hub2: {address_id: 2, management_ip: 172.30.0.2}
+
+spokes:
+  node1:
+    address_id: 11
+    management_ip: 172.30.0.11
+    home_hub: hub1
+    lan_network: 10.1.0.0/24
+    lan_gateway: 10.1.0.1
+    lan_switch: lsw1
+    lan_dpid: 101
+  node2:
+    address_id: 12
+    management_ip: 172.30.0.12
+    home_hub: hub1
+    lan_network: 10.2.0.0/24
+    lan_gateway: 10.2.0.1
+    lan_switch: lsw2
+    lan_dpid: 102
+  node3:
+    address_id: 13
+    management_ip: 172.30.0.13
+    home_hub: hub1
+    lan_network: 10.3.0.0/24
+    lan_gateway: 10.3.0.1
+    lan_switch: lsw3
+    lan_dpid: 103
+  node4:
+    address_id: 14
+    management_ip: 172.30.0.14
+    home_hub: hub2
+    lan_network: 10.4.0.0/24
+    lan_gateway: 10.4.0.1
+    lan_switch: lsw4
+    lan_dpid: 104
+  node5:
+    address_id: 15
+    management_ip: 172.30.0.15
+    home_hub: hub2
+    lan_network: 10.5.0.0/24
+    lan_gateway: 10.5.0.1
+    lan_switch: lsw5
+    lan_dpid: 105

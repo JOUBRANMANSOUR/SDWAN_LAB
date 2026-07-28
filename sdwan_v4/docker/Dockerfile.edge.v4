@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1.7
+FROM ubuntu:24.04 AS builder
+ARG DEBIAN_FRONTEND=noninteractive
+ARG NDPI_TAG=5.0
+ARG NDPI_COMMIT=375f99ef9fb4999d778b57bbeece171b3fa9fba6
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      autoconf automake build-essential ca-certificates cmake git libgcrypt20-dev \
+      libjson-c-dev libmaxminddb-dev libmnl-dev libnetfilter-queue-dev libpcap-dev \
+      libpcre2-dev libtool pkg-config python3-pip python3-venv && \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+RUN git clone --depth 1 --branch "${NDPI_TAG}" https://github.com/ntop/nDPI.git ndpi && \
+    test "$(git -C ndpi rev-parse HEAD)" = "${NDPI_COMMIT}"
+WORKDIR /build/ndpi
+RUN ./autogen.sh && ./configure --prefix=/usr/local --with-only-libndpi && \
+    make -j"$(nproc)" && make install && make install DESTDIR=/stage && ldconfig
+COPY classifier /build/classifier
+WORKDIR /build/classifier-build
+RUN cmake -S /build/classifier -B . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    cmake --build . -j"$(nproc)" && ctest --output-on-failure && \
+    DESTDIR=/stage cmake --install .
+RUN python3 -m venv /opt/sdwan/venv
+COPY requirements-edge.txt /build/requirements-edge.txt
+RUN /opt/sdwan/venv/bin/pip install --no-cache-dir -r /build/requirements-edge.txt
+
+FROM ubuntu:24.04 AS runtime
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates conntrack curl iperf3 iproute2 iptables iputils-ping \
+      libgcrypt20 libjson-c5 libmaxminddb0 libmnl0 libnetfilter-queue1 libpcap0.8 \
+      libpcre2-8-0 procps python3 tcpdump wireguard-tools && \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=builder /stage/usr/local /usr/local
+COPY --from=builder /opt/sdwan/venv /opt/sdwan/venv
+RUN ldconfig && mkdir -p /run/sdwan /run/sdwan-keys
+ENV PATH="/opt/sdwan/venv/bin:${PATH}" PYTHONUNBUFFERED=1
+CMD ["sleep", "infinity"]

@@ -403,9 +403,9 @@ def _start_workloads(nodes: Mapping[str, Any], plan: LiveTopologyPlan, config: T
     for name in plan.nginx_nodes:
         _run_checked(nodes[name], ["nginx", "-t"])
         _run_checked(nodes[name], ["nginx"])
-    _run_checked(nodes["sensitive_saas"], ["sh", "-c", "nohup python3 /opt/sdwan_v5/workloads/saas_service.py >/var/log/sensitive-saas.log 2>&1 &"])
+    _run_checked(nodes["sensitive_saas"], ["sh", "-c", "setsid nohup python3 /opt/sdwan_v5/workloads/saas_service.py </dev/null >/var/log/sensitive-saas.log 2>&1 & sleep 0.2; pgrep -f saas_service.py"])
     for port in (9000, 9001, 443):
-        _run_checked(nodes["unknown_saas"], ["sh", "-c", f"nohup iperf3 -s -p {port} >/var/log/unknown-{port}.log 2>&1 &"])
+        _run_checked(nodes["unknown_saas"], ["sh", "-c", f"setsid nohup iperf3 -s -p {port} </dev/null >/var/log/unknown-{port}.log 2>&1 & sleep 0.2; pgrep -f 'iperf3 -s -p {port}'"])
 
 
 def _verify_physical_topology(nodes: Mapping[str, Any], config: TopologyConfig) -> None:

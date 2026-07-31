@@ -199,6 +199,17 @@ class EdgeAgent:
                 if not ip_network(prefix).subnet_of(self.config.saas_network):
                     raise ValueError("direct Internet policy is limited to the simulated SaaS network")
                 self._run("ip", "route", "replace", prefix, "via", str(self.config.saas_transport_ips[transport]), "dev", f"{self.site}-{transport}", "table", str(self.config.transports[transport].route_table))
+            elif egress is EgressMode.HUB_OVERLAY:
+                active = desired.get("active_target_by_slot", {})
+                target = active.get(transport) if isinstance(active, Mapping) else None
+                if not isinstance(target, Mapping):
+                    raise ValueError("hub-overlay policy has no active tunnel target")
+                hub = str(target.get("hub", ""))
+                interface = str(target.get("interface", ""))
+                if hub not in self.config.hubs or not interface:
+                    raise ValueError("hub-overlay policy has an invalid active tunnel target")
+                table = self.config.target(hub, transport).route_table
+                self._run("ip", "route", "replace", prefix, "dev", interface, "table", str(table))
         default_mark, _, _ = self._intent_mark(desired, default_intent)
         self.install_policy_rules()
         self.install_scoped_direct_nat(str(self.config.sites[self.site].lan_network), {"bb": f"{self.site}-bb", "lte": f"{self.site}-lte"})

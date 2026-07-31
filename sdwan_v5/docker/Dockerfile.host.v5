@@ -10,6 +10,8 @@ COPY sdwan_v5/workloads/saas-test-file.txt /srv/www/sdwan-v5-test-file.txt
 COPY sdwan_v5/workloads/http_load.py /opt/sdwan_v5/workloads/http_load.py
 RUN chmod +x /usr/local/bin/generate_test_certificate.sh && \
     /usr/local/bin/generate_test_certificate.sh && \
+COPY sdwan_v5/workloads/saas_service.py /opt/sdwan_v5/workloads/saas_service.py
+COPY sdwan_v5/workloads/saas-test-file.txt /srv/www/test-file.bin
     nginx -t && \
     sha256sum /srv/www/sdwan-v5-test-file.txt > /srv/www/sdwan-v5-test-file.sha256
 CMD ["sleep", "infinity"]

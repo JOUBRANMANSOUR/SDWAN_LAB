@@ -186,3 +186,48 @@ Print exact CLI commands with `bash sdwan_v5/scripts/failure_injection.sh <scena
 ## Shutdown and rollback
 
 Stop workloads, captures, ZTP, Policy and Ryu; leave the Containernet CLI to call `net.stop()`. Remove only v5 containers, volumes, interfaces/tables and evidence. Do not reuse v5 keys, IPs, conntrack state, databases, claims, CA/certificates, leases or ownership epochs in v4. Verify v4’s manifest, then start v4 from its separate directory/scripts only after clearing v5 runtime state.
+
+## Cloud VPC and destination-specific SaaS validation
+
+Cloud VPC remains disabled by default. Enable it only after the baseline passes. This is a source configuration mutation, so rebuild the Edge image and restart the Policy Service before enrollment; a static-plan test does not prove gateway forwarding or failure recovery.
+
+```bash
+sed -i 's/enabled: false/enabled: true/' sdwan_v5/config/topology.yaml
+sudo bash sdwan_v5/scripts/build_images.sh
+# restart Policy and ZTP services, then restart the topology and enroll again
+bash sdwan_v5/scripts/run_topology.sh
+```
+
+After enrollment, use these Containernet checks. Routes are source-preserving private routes, so a Cloud packet must never use direct Internet NAT:
+
+```text
+node1_host ping -c 3 10.200.0.10
+node1_host curl -fsS --connect-timeout 10 http://10.200.0.10/healthz
+hub1 ip route get 10.200.0.10
+hub2 ip route get 10.200.0.10
+cloud_gw1 ip route get 10.1.0.10
+cloud_app ip route get 10.1.0.10
+node1 iptables -t nat -nvL SDWAN_V5_DIRECT_NAT
+```
+
+Destination-specific SaaS checks (the self-signed laboratory certificate requires `--insecure` only in this lab):
+
+```text
+# Trusted download: direct BB/LTE is allowed, with hub fallback.
+node1_host python3 /opt/sdwan_v5/workloads/http_load.py http://198.18.0.10/sdwan-v5-test-file.txt --clients 1
+node1_host python3 /opt/sdwan_v5/workloads/http_load.py http://198.18.0.10/sdwan-v5-test-file.txt --clients 10
+
+# Sensitive HTTPS API/upload: hub overlay only and fail closed.
+node1_host curl --insecure -fsS https://198.18.0.20/api/status
+node1_host sh -c 'printf sensitive | curl --insecure -fsS -X POST --data-binary @- https://198.18.0.20/upload'
+
+# Unknown generic TCP/UDP: hub overlay only and fail closed.
+node1_host iperf3 -c 198.18.0.30 -p 9000 -t 5
+node1_host iperf3 -u -c 198.18.0.30 -p 9001 -t 5
+```
+
+Capture both directions at the branch, selected WireGuard link, hub Internet interface, and SaaS interface. Keep classifier JSONL as metadata-only evidence. UDP/443 is generic unknown UDP only; the lab makes no QUIC-classification claim.
+
+### Cloud failure injection (pending privileged live validation)
+
+With the Cloud option enabled and an active Cloud flow, record the route, WireGuard counters, service result, and capture. Bring down exactly one hub-to-gateway transit interface, wait for the configured control-plane reconciliation window, then repeat all checks. Restore the interface and repeat for the other gateway and preferred hub. Record loss/convergence timing; do not claim a result until return traffic and the original branch source are observed.

@@ -110,9 +110,12 @@ class EdgePolicyTopologyTests(unittest.TestCase):
                 snapshot = application.snapshot("node1")
                 by_prefix = {item["prefix"]: item for item in snapshot["destination_intents"]}
                 self.assertEqual(by_prefix["10.100.0.0/24"]["application"], "corporate")
-                self.assertEqual(by_prefix["198.18.0.0/24"]["application"], "web")
-                self.assertIn("DIRECT_INTERNET", by_prefix["198.18.0.0/24"]["allowed_egress"])
-                self.assertEqual(snapshot["default_intent"]["application"], "default")
+                self.assertEqual(by_prefix["198.18.0.10/32"]["trust_class"], "TRUSTED")
+                self.assertIn("DIRECT_INTERNET", by_prefix["198.18.0.10/32"]["allowed_egress"])
+                self.assertEqual(by_prefix["198.18.0.20/32"]["trust_class"], "SENSITIVE")
+                self.assertEqual(by_prefix["198.18.0.30/32"]["trust_class"], "UNKNOWN")
+                self.assertEqual(snapshot["default_intent"]["failure_action"], "FAIL_CLOSED")
+                self.assertEqual(snapshot["policy_version"], 1)
             finally:
                 application.service.store.close()
 
@@ -160,8 +163,8 @@ class EdgePolicyTopologyTests(unittest.TestCase):
         self.assertEqual(validate_plan(ROOT / "config" / "topology.yaml"), plan)
         self.assertEqual(len(live.switches), 11)
         self.assertEqual(sum(switch.openflow for switch in live.switches), 8)
-        self.assertEqual(len(live.docker_nodes), 14)
-        self.assertEqual(len(live.links), 45)
+        self.assertEqual(len(live.docker_nodes), 16)
+        self.assertEqual(len(live.links), 47)
         self.assertEqual(sum(link.transport is not None for link in live.links), 21)
         self.assertLessEqual(max(len(interface) for link in live.links for interface in (link.intf1, link.intf2)), 15)
 
@@ -179,9 +182,17 @@ class EdgePolicyTopologyTests(unittest.TestCase):
         self.assertEqual(plan.inventory.cloud_nodes, ("cloud_gw1", "cloud_gw2", "cloud_app"))
         self.assertEqual(sum(switch.openflow for switch in plan.switches), 8)
         self.assertEqual(len(plan.switches), 12)
-        self.assertEqual(len(plan.docker_nodes), 17)
-        self.assertEqual(len(plan.links), 56)
-        self.assertEqual(len(plan.forwarding_nodes), 9)
+        self.assertEqual(len(plan.docker_nodes), 19)
+        self.assertEqual(len(plan.links), 54)
+        self.assertEqual(len(plan.forwarding_nodes), 10)
+        gateway_links = [link for link in plan.links if link.node1.startswith("cloud_gw") or link.node2.startswith("cloud_gw")]
+        self.assertEqual(len(gateway_links), 6)
+        self.assertFalse(any(link.transport is not None for link in gateway_links))
+        self.assertFalse(any(link.node1.startswith("node") and link.node2.startswith("cloud_gw") for link in plan.links))
+        cloud_gateway_links = [link for link in plan.links if link.node1.startswith("cloud_gw") or link.node2.startswith("cloud_gw")]
+        self.assertEqual(len(cloud_gateway_links), 6)
+        self.assertFalse(any(link.transport for link in cloud_gateway_links))
+        self.assertFalse(any(link.node1.startswith("node") and link.node2.startswith("cloud_gw") for link in plan.links))
 
     def test_launch_live_builds_expected_containernet_lifecycle(self) -> None:
         calls: list[tuple[str, object]] = []
@@ -289,7 +300,7 @@ class EdgePolicyTopologyTests(unittest.TestCase):
         self.assertEqual(len({payload["dpid"] for payload in switch_calls if payload["cls"] is FakeOVSSwitch}), 8)
 
         docker_calls = [payload for kind, payload in calls if kind == "docker"]
-        self.assertEqual(len(docker_calls), 14)
+        self.assertEqual(len(docker_calls), 16)
         node1 = next(payload for payload in docker_calls if payload["name"] == "node1")
         self.assertEqual(node1["network_mode"], "none")
         self.assertIn("net_admin", node1["cap_add"])
@@ -303,7 +314,7 @@ class EdgePolicyTopologyTests(unittest.TestCase):
         })
 
         link_calls = [payload for kind, payload in calls if kind == "link"]
-        self.assertEqual(len(link_calls), 45)
+        self.assertEqual(len(link_calls), 47)
         self.assertTrue(all(payload["cls"] is FakeLink for payload in link_calls))
         self.assertIn(("node1", ("ip", "address", "replace", "192.168.20.11/24", "dev", "node1-bb")), pexec_commands)
         self.assertIn(("node1", ("tc", "qdisc", "replace", "dev", "node1-bb", "root", "handle", "5:0", "hfsc", "default", "1")), pexec_commands)

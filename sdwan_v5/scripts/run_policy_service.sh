@@ -7,6 +7,7 @@ PYTHONPATH="$root" exec python -m sdwan_v5.policy_http \
   --config "$root/sdwan_v5/config/topology.yaml" \
   --app-policy "$root/sdwan_v5/config/app_policy.yaml" \
   --inventory "$root/sdwan_v5/config/site_inventory.yaml" \
+  --destination-policy "$root/sdwan_v5/config/destination_policy.yaml" \
   --database "$state_root/policy/policy.db" \
   --ca-bundle "$state_root/trust/ca-cert.pem" \
   --certificate "$state_root/trust/policy-cert.pem" \

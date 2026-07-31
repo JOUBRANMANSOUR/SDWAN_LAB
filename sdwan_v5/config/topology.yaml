@@ -124,3 +124,8 @@ cloud_vpc:
   gateway_ips: {cloud_gw1: 10.200.0.1, cloud_gw2: 10.200.0.2}
   gateway_management_ips: {cloud_gw1: 172.30.0.21, cloud_gw2: 172.30.0.22}
   gateway_address_ids: {cloud_gw1: 21, cloud_gw2: 22}
+  transit_networks:
+    hub1_cloud_gw1: 172.20.1.0/30
+    hub1_cloud_gw2: 172.20.2.0/30
+    hub2_cloud_gw1: 172.20.3.0/30
+    hub2_cloud_gw2: 172.20.4.0/30

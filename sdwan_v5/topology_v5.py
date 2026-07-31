@@ -127,7 +127,7 @@ def build_plan(config: TopologyConfig) -> TopologyPlan:
         branch_switches=tuple(site.lan_switch for site in config.sites.values()),
         underlay_switches=tuple(transport.switch for transport in config.transports.values()),
         data_center_nodes=(config.data_center_switch, config.data_center_app_name),
-        saas_nodes=(config.saas_switch, config.saas_app_name),
+        saas_nodes=(config.saas_switch, config.saas_app_name, "sensitive_saas", "unknown_saas"),
         cloud_nodes=cloud,
     )
 
@@ -140,7 +140,7 @@ def build_live_plan(config: TopologyConfig) -> LiveTopologyPlan:
     """
     inventory = build_plan(config)
     active_cloud_gateways = config.cloud_vpc.active_gateways if config.cloud_vpc.enabled else ()
-    edge_nodes = config.site_names + active_cloud_gateways
+    edge_nodes = config.site_names
 
     switches = [
         *(SwitchSpec(transport.switch, openflow=True, dpid=transport.dpid)
@@ -157,12 +157,14 @@ def build_live_plan(config: TopologyConfig) -> LiveTopologyPlan:
     docker_nodes = [
         *(DockerNodeSpec(name, config.edge_image, "edge-router", persistent_identity=True)
           for name in config.site_names),
-        *(DockerNodeSpec(name, config.edge_image, "cloud-gateway", persistent_identity=True)
+        *(DockerNodeSpec(name, config.edge_image, "cloud-gateway", persistent_identity=False)
           for name in active_cloud_gateways),
         *(DockerNodeSpec(site.host_name, config.host_image, "branch-client")
           for site in config.sites.values()),
         DockerNodeSpec(config.data_center_app_name, config.host_image, "data-center-app"),
         DockerNodeSpec(config.saas_app_name, config.host_image, "saas-app"),
+        DockerNodeSpec("sensitive_saas", config.host_image, "sensitive-saas"),
+        DockerNodeSpec("unknown_saas", config.host_image, "unknown-saas"),
     ]
     if config.cloud_vpc.enabled:
         docker_nodes.append(DockerNodeSpec(config.cloud_vpc.app_name, config.host_image, "cloud-app"))
@@ -179,20 +181,15 @@ def build_live_plan(config: TopologyConfig) -> LiveTopologyPlan:
         config.controller.management_address,
     ))
     for name in edge_nodes:
-        management_ip = (
-            config.hubs[name].management_ip if name in config.hubs
-            else config.sites[name].management_ip if name in config.sites
-            else config.cloud_vpc.gateway_management_ips[name]
-        )
+        management_ip = config.hubs[name].management_ip if name in config.hubs else config.sites[name].management_ip
         links.append(LinkSpec(
             name, config.management_switch, f"{name}-mgmt",
             _bridge_port(config.management_switch, _short_name(name)),
             _cidr(management_ip, config.management_network),
         ))
-
-    # Every hub, every spoke, and each enabled cloud gateway is physically
-    # attached to every transport.  These links are the *underlay*, not a
-    # request to balance packets across paths.
+    # Every hub and spoke is physically attached to every transport. Cloud
+    # Gateways are deliberately reached only through dedicated hub-to-gateway
+    # links; they are not additional spoke underlay attachments.
     for name in edge_nodes:
         for transport in config.transports.values():
             links.append(LinkSpec(
@@ -238,6 +235,10 @@ def build_live_plan(config: TopologyConfig) -> LiveTopologyPlan:
             f"{transport.switch}-saas", _cidr(address, transport.network),
         ))
 
+    for name, address, suffix in (("sensitive_saas", "198.18.0.20/24", "sens"), ("unknown_saas", "198.18.0.30/24", "unk")):
+        interface = "sens-inet" if name == "sensitive_saas" else "unk-inet"
+        links.append(LinkSpec(name, config.saas_switch, interface, _bridge_port(config.saas_switch, suffix), address))
+        routes.append(RouteSpec(name, config.saas_ip, interface))
     if config.cloud_vpc.enabled:
         for gateway in active_cloud_gateways:
             links.append(LinkSpec(
@@ -245,6 +246,10 @@ def build_live_plan(config: TopologyConfig) -> LiveTopologyPlan:
                 _bridge_port(config.cloud_vpc.switch, _short_name(gateway)),
                 _cidr(config.cloud_vpc.gateway_ips[gateway], config.cloud_vpc.network),
             ))
+        for hub in HUBS:
+            for gateway in active_cloud_gateways:
+                network = config.cloud_vpc.transit_network(hub, gateway)
+                links.append(LinkSpec(hub, gateway, f"{_short_name(hub)}-{_short_name(gateway)}", f"{_short_name(gateway)}-{_short_name(hub)}", _cidr(config.cloud_vpc.transit_ip(hub, gateway, hub), network), _cidr(config.cloud_vpc.transit_ip(hub, gateway, gateway), network)))
         links.append(LinkSpec(
             config.cloud_vpc.app_name, config.cloud_vpc.switch,
             f"{config.cloud_vpc.app_name}-vpc", _bridge_port(config.cloud_vpc.switch, "app"),
@@ -257,7 +262,7 @@ def build_live_plan(config: TopologyConfig) -> LiveTopologyPlan:
         docker_nodes=tuple(docker_nodes),
         links=tuple(links),
         host_default_routes=tuple(routes),
-        forwarding_nodes=edge_nodes,
+        forwarding_nodes=edge_nodes + active_cloud_gateways + (config.saas_app_name,),
         nginx_nodes=tuple(
             name for name in (
                 config.data_center_app_name,
@@ -343,6 +348,20 @@ def _configure_addresses(nodes: Mapping[str, Any], config: TopologyConfig, plan:
             "ip", "route", "replace", str(site.lan_network), "via",
             str(config.data_center_hub_ips[owner_hub]), "dev", dc_interface,
         ])
+    if config.cloud_vpc.enabled:
+        primary_gateway = {"hub1": "cloud_gw1", "hub2": "cloud_gw2"}
+        cloud_app = config.cloud_vpc.app_name
+        cloud_interface = f"{cloud_app}-vpc"
+        for hub, gateway in primary_gateway.items():
+            _run_checked(nodes[hub], ["ip", "route", "replace", str(config.cloud_vpc.network), "via", str(config.cloud_vpc.transit_ip(hub, gateway, gateway)), "dev", f"{_short_name(hub)}-{_short_name(gateway)}"])
+        for gateway in config.cloud_vpc.active_gateways:
+            for site in config.sites.values():
+                owner_hub = site.preferred_hub
+                _run_checked(nodes[gateway], ["ip", "route", "replace", str(site.lan_network), "via", str(config.cloud_vpc.transit_ip(owner_hub, gateway, owner_hub)), "dev", f"{_short_name(gateway)}-{_short_name(owner_hub)}"])
+        for site in config.sites.values():
+            owner_hub = site.preferred_hub
+            gateway = primary_gateway[owner_hub]
+            _run_checked(nodes[cloud_app], ["ip", "route", "replace", str(site.lan_network), "via", str(config.cloud_vpc.gateway_ips[gateway]), "dev", cloud_interface])
     for name in plan.forwarding_nodes:
         _run_checked(nodes[name], ["sysctl", "-w", "net.ipv4.ip_forward=1"])
 
@@ -380,10 +399,13 @@ def _configure_transport_qdiscs(nodes: Mapping[str, Any], config: TopologyConfig
             _run_checked(nodes[node_name], netem)
 
 
-def _start_workloads(nodes: Mapping[str, Any], plan: LiveTopologyPlan) -> None:
+def _start_workloads(nodes: Mapping[str, Any], plan: LiveTopologyPlan, config: TopologyConfig) -> None:
     for name in plan.nginx_nodes:
         _run_checked(nodes[name], ["nginx", "-t"])
         _run_checked(nodes[name], ["nginx"])
+    _run_checked(nodes["sensitive_saas"], ["sh", "-c", "nohup python3 /opt/sdwan_v5/workloads/saas_service.py >/var/log/sensitive-saas.log 2>&1 &"])
+    for port in (9000, 9001, 443):
+        _run_checked(nodes["unknown_saas"], ["sh", "-c", f"nohup iperf3 -s -p {port} >/var/log/unknown-{port}.log 2>&1 &"])
 
 
 def _verify_physical_topology(nodes: Mapping[str, Any], config: TopologyConfig) -> None:
@@ -510,7 +532,7 @@ def launch_live(config_path: Path) -> None:
             raise RuntimeError("not all OpenFlow switches connected to the configured Ryu controller within 10 seconds")
         _configure_addresses(nodes, config, live_plan)
         _configure_transport_qdiscs(nodes, config, live_plan)
-        _start_workloads(nodes, live_plan)
+        _start_workloads(nodes, live_plan, config)
         _verify_physical_topology(nodes, config)
         print(
             "Physical v5 topology is ready. ZTP, WireGuard, desired-state routes, NAT, "

@@ -11,6 +11,7 @@ import subprocess
 from typing import Any, Iterable, Mapping, Protocol
 
 from .common.marks import EgressMode
+from ipaddress import ip_network
 from .common.model import TopologyConfig
 from .identity_store import IdentityStore
 from .local_failover import LocalFailoverEvent, LocalFailoverManager, SlotTarget
@@ -195,7 +196,7 @@ class EdgeAgent:
             prefix_marks.append((prefix, mark))
             seen_prefixes.add(prefix)
             if egress is EgressMode.DIRECT_INTERNET:
-                if prefix != str(self.config.saas_network):
+                if not ip_network(prefix).subnet_of(self.config.saas_network):
                     raise ValueError("direct Internet policy is limited to the simulated SaaS network")
                 self._run("ip", "route", "replace", prefix, "via", str(self.config.saas_transport_ips[transport]), "dev", f"{self.site}-{transport}", "table", str(self.config.transports[transport].route_table))
         default_mark, _, _ = self._intent_mark(desired, default_intent)

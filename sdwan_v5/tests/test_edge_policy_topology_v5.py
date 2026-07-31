@@ -11,9 +11,9 @@ import yaml
 
 from sdwan_v5.common.model import ConfigurationError, config_from_mapping, load_config
 from sdwan_v5.desired_state_v5 import build_spoke_desired_state
+from sdwan_v5.topology_v5 import _configure_addresses, build_live_plan, build_plan, launch_live, validate_plan
 from sdwan_v5.edge_agent_v5 import EdgeAgent
 from sdwan_v5.policy_service_v5 import PolicyService
-from sdwan_v5.topology_v5 import build_live_plan, build_plan, launch_live, validate_plan
 from sdwan_v5.policy_http import PolicyApplication
 
 
@@ -196,6 +196,27 @@ class EdgePolicyTopologyTests(unittest.TestCase):
         self.assertEqual(len(cloud_gateway_links), 6)
         self.assertFalse(any(link.transport for link in cloud_gateway_links))
         self.assertFalse(any(link.node1.startswith("node") and link.node2.startswith("cloud_gw") for link in plan.links))
+
+    def test_cloud_routes_have_deterministic_primary_and_backup_paths(self) -> None:
+        raw = yaml.safe_load((ROOT / "config" / "topology.cloud.yaml").read_text(encoding="utf-8"))
+        cloud_config = config_from_mapping(raw)
+        plan = build_live_plan(cloud_config)
+
+        class Node:
+            def __init__(self) -> None:
+                self.commands: list[list[str]] = []
+
+            def pexec(self, command: list[str]) -> tuple[str, str, int]:
+                self.commands.append(command)
+                return "", "", 0
+
+        names = {name for link in plan.links for name in (link.node1, link.node2)}
+        nodes = {name: Node() for name in names}
+        _configure_addresses(nodes, cloud_config, plan)
+        self.assertIn(["ip", "route", "replace", "10.200.0.0/24", "via", "172.20.1.2", "dev", "h1-c1", "metric", "100"], nodes["hub1"].commands)
+        self.assertIn(["ip", "route", "replace", "10.200.0.0/24", "via", "172.20.2.2", "dev", "h1-c2", "metric", "200"], nodes["hub1"].commands)
+        self.assertIn(["ip", "route", "replace", "10.1.0.0/24", "via", "172.20.3.1", "dev", "c1-h2", "metric", "200"], nodes["cloud_gw1"].commands)
+        self.assertIn(["ip", "route", "replace", "10.1.0.0/24", "via", "10.200.0.2", "dev", "cloud_app-vpc", "metric", "200"], nodes["cloud_app"].commands)
 
     def test_launch_live_builds_expected_containernet_lifecycle(self) -> None:
         calls: list[tuple[str, object]] = []

@@ -349,19 +349,25 @@ def _configure_addresses(nodes: Mapping[str, Any], config: TopologyConfig, plan:
             str(config.data_center_hub_ips[owner_hub]), "dev", dc_interface,
         ])
     if config.cloud_vpc.enabled:
-        primary_gateway = {"hub1": "cloud_gw1", "hub2": "cloud_gw2"}
+        gateways = config.cloud_vpc.active_gateways
+        if not gateways:
+            raise RuntimeError("Cloud VPC is enabled without an active gateway")
+        gateway_orders = {
+            "hub1": (gateways[0], *gateways[1:]),
+            "hub2": (gateways[-1], *gateways[:-1]),
+        }
         cloud_app = config.cloud_vpc.app_name
         cloud_interface = f"{cloud_app}-vpc"
-        for hub, gateway in primary_gateway.items():
-            _run_checked(nodes[hub], ["ip", "route", "replace", str(config.cloud_vpc.network), "via", str(config.cloud_vpc.transit_ip(hub, gateway, gateway)), "dev", f"{_short_name(hub)}-{_short_name(gateway)}"])
-        for gateway in config.cloud_vpc.active_gateways:
+        for hub, gateways_for_hub in gateway_orders.items():
+            for priority, gateway in enumerate(gateways_for_hub):
+                _run_checked(nodes[hub], ["ip", "route", "replace", str(config.cloud_vpc.network), "via", str(config.cloud_vpc.transit_ip(hub, gateway, gateway)), "dev", f"{_short_name(hub)}-{_short_name(gateway)}", "metric", str(100 + priority * 100)])
+        for gateway in gateways:
             for site in config.sites.values():
-                owner_hub = site.preferred_hub
-                _run_checked(nodes[gateway], ["ip", "route", "replace", str(site.lan_network), "via", str(config.cloud_vpc.transit_ip(owner_hub, gateway, owner_hub)), "dev", f"{_short_name(gateway)}-{_short_name(owner_hub)}"])
+                for priority, hub in enumerate((site.preferred_hub, site.standby_hub)):
+                    _run_checked(nodes[gateway], ["ip", "route", "replace", str(site.lan_network), "via", str(config.cloud_vpc.transit_ip(hub, gateway, hub)), "dev", f"{_short_name(gateway)}-{_short_name(hub)}", "metric", str(100 + priority * 100)])
         for site in config.sites.values():
-            owner_hub = site.preferred_hub
-            gateway = primary_gateway[owner_hub]
-            _run_checked(nodes[cloud_app], ["ip", "route", "replace", str(site.lan_network), "via", str(config.cloud_vpc.gateway_ips[gateway]), "dev", cloud_interface])
+            for priority, gateway in enumerate(gateway_orders[site.preferred_hub]):
+                _run_checked(nodes[cloud_app], ["ip", "route", "replace", str(site.lan_network), "via", str(config.cloud_vpc.gateway_ips[gateway]), "dev", cloud_interface, "metric", str(100 + priority * 100)])
     for name in plan.forwarding_nodes:
         _run_checked(nodes[name], ["sysctl", "-w", "net.ipv4.ip_forward=1"])
 

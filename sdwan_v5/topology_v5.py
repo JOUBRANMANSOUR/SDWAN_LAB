@@ -505,7 +505,10 @@ def launch_live(config_path: Path) -> None:
             }
             if node.persistent_identity:
                 parameters.update({
-                    "volumes": [f"sdwan-{node.name}-identity:/var/lib/sdwan:rw"],
+                    "volumes": [
+                        f"sdwan-{node.name}-identity:/var/lib/sdwan:rw",
+                        f"{config.source.resolve()}:/opt/sdwan_v5/config/topology.yaml:ro",
+                    ],
                     "cap_add": ["net_admin", "net_raw"],
                 })
             if node.name in live_plan.forwarding_nodes:

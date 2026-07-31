@@ -131,15 +131,14 @@ node1 tail -n 30 /var/lib/sdwan/state/classifier-events.jsonl
 ```
 Record a terminal `type:"flow"` event only after confirming it contains
 application/category, destination, timing, and counters—never traffic payload.
-This is a separate live acceptance gate from nDPI process startup.
 separate live acceptance gate from nDPI process startup.
 
 
-Cloud VPC remains disabled by default. Enable only after baseline passes:
+Cloud VPC remains disabled in `config/topology.yaml`. Use the separate `config/topology.cloud.yaml` profile only after baseline passes; it leaves the default configuration unchanged:
 
 ```bash
-sed -i 's/enabled: false/enabled: true/' sdwan_v5/config/topology.yaml
-bash sdwan_v5/scripts/run_topology.sh
+SDWAN_TOPOLOGY_CONFIG=/mnt/data/sdwan-lab/sdwan_v5/config/topology.cloud.yaml \
+  bash sdwan_v5/scripts/run_topology.sh
 ```
 
 ## Physical-topology smoke checks
@@ -189,13 +188,15 @@ Stop workloads, captures, ZTP, Policy and Ryu; leave the Containernet CLI to cal
 
 ## Cloud VPC and destination-specific SaaS validation
 
-Cloud VPC remains disabled by default. Enable it only after the baseline passes. This is a source configuration mutation, so rebuild the Edge image and restart the Policy Service before enrollment; a static-plan test does not prove gateway forwarding or failure recovery.
+Cloud VPC remains disabled in the default profile. The separate Cloud profile is bind-mounted read-only into Edge containers, so it is reversible and does not require editing the default configuration. Rebuild images only when source has changed, restart the Policy Service using the same profile, then start a fresh topology and enroll again:
 
 ```bash
-sed -i 's/enabled: false/enabled: true/' sdwan_v5/config/topology.yaml
+cd /mnt/data/sdwan-lab
 sudo bash sdwan_v5/scripts/build_images.sh
-# restart Policy and ZTP services, then restart the topology and enroll again
-bash sdwan_v5/scripts/run_topology.sh
+SDWAN_TOPOLOGY_CONFIG=$PWD/sdwan_v5/config/topology.cloud.yaml \
+  SDWAN_STATE_ROOT=/mnt/data/sdwan-state bash sdwan_v5/scripts/run_policy_service.sh
+SDWAN_TOPOLOGY_CONFIG=$PWD/sdwan_v5/config/topology.cloud.yaml \
+  bash sdwan_v5/scripts/run_topology.sh
 ```
 
 After enrollment, use these Containernet checks. Routes are source-preserving private routes, so a Cloud packet must never use direct Internet NAT:

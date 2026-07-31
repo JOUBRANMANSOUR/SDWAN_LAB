@@ -308,7 +308,7 @@ class EdgePolicyTopologyTests(unittest.TestCase):
         self.assertEqual(node1["network_mode"], "none")
         self.assertIn("net_admin", node1["cap_add"])
         self.assertIn("net_raw", node1["cap_add"])
-        self.assertEqual(node1["volumes"], ["sdwan-node1-identity:/var/lib/sdwan:rw"])
+        self.assertEqual(node1["volumes"], ["sdwan-node1-identity:/var/lib/sdwan:rw", f"{(ROOT / 'config' / 'topology.yaml').resolve()}:/opt/sdwan_v5/config/topology.yaml:ro"])
         self.assertEqual(node1["sysctls"], {
             "net.ipv4.conf.all.rp_filter": "0",
             "net.ipv4.conf.default.rp_filter": "0",

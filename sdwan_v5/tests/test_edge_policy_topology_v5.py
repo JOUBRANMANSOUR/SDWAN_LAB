@@ -79,6 +79,7 @@ class EdgePolicyTopologyTests(unittest.TestCase):
             self.assertTrue(any("-d 10.100.0.0/24" in command and "0x1001/0xf0ff" in command for command in commands))
             self.assertTrue(any("-d 198.18.0.0/24" in command and "0x4002/0xf0ff" in command for command in commands))
             self.assertIn(["ip", "route", "replace", "198.18.0.20/32", "dev", "wg-h1-mpls", "table", "1101"], runner.commands)
+            self.assertTrue(any(command[:3] == ["wg", "set", "wg-h1-mpls"] and command[5] == "allowed-ips" and "198.18.0.20/32" in command[6] for command in runner.commands))
             self.assertIn(["ip", "route", "replace", "198.18.0.0/24", "via", "192.168.20.254", "dev", "node1-bb", "table", "102"], runner.commands)
             self.assertTrue(any("NFQUEUE --queue-num 4100 --queue-bypass" in command for command in commands))
 

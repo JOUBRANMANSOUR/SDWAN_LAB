@@ -186,6 +186,7 @@ class EdgeAgent:
             raise ValueError("policy snapshot lacks destination intents")
         prefix_marks: list[tuple[str, int]] = []
         seen_prefixes: set[str] = set()
+        hub_overlay_prefixes: dict[str, list[str]] = {}
         for raw_intent in intents:
             if not isinstance(raw_intent, Mapping):
                 raise ValueError("policy destination intent must be an object")
@@ -209,12 +210,29 @@ class EdgeAgent:
                 if hub not in self.config.hubs or not interface:
                     raise ValueError("hub-overlay policy has an invalid active tunnel target")
                 table = self.config.target(hub, transport).route_table
+                hub_overlay_prefixes.setdefault(interface, []).append(prefix)
                 self._run("ip", "route", "replace", prefix, "dev", interface, "table", str(table))
+        self._ensure_hub_overlay_allowed_ips(desired, hub_overlay_prefixes)
         default_mark, _, _ = self._intent_mark(desired, default_intent)
         self.install_policy_rules()
         self.install_scoped_direct_nat(str(self.config.sites[self.site].lan_network), {"bb": f"{self.site}-bb", "lte": f"{self.site}-lte"})
         self._start_native_classifier(4100)
         self.install_connmark_rules(f"{self.site}-lan", prefix_marks, default_mark)
+    def _ensure_hub_overlay_allowed_ips(self, desired: Mapping[str, Any], prefixes_by_interface: Mapping[str, list[str]]) -> None:
+        """Reconcile policy-required prefixes into the selected hub peer only."""
+        interfaces = {str(item["name"]): item for item in desired["interfaces"]}
+        for interface_name, prefixes in prefixes_by_interface.items():
+            interface = interfaces.get(interface_name)
+            if not isinstance(interface, Mapping):
+                raise ValueError("hub-overlay policy names an unknown WireGuard interface")
+            peers = interface.get("peers")
+            if not isinstance(peers, (list, tuple)) or len(peers) != 1 or not isinstance(peers[0], Mapping):
+                raise ValueError("spoke hub-overlay interface must have exactly one peer")
+            peer = peers[0]
+            allowed = {str(value) for value in peer.get("allowed_ips", ())}
+            allowed.update(prefixes)
+            self._run("wg", "set", interface_name, "peer", str(peer["public_key"]), "allowed-ips", ",".join(sorted(allowed)), "persistent-keepalive", str(peer["keepalive_s"]))
+
 
     def install_hub_backhaul(self) -> None:
         """Install symmetric branch returns and scoped SaaS backhaul NAT on a hub."""

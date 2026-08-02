@@ -11,7 +11,14 @@ import yaml
 
 from sdwan_v5.common.model import ConfigurationError, config_from_mapping, load_config
 from sdwan_v5.desired_state_v5 import build_spoke_desired_state
-from sdwan_v5.topology_v5 import _configure_addresses, build_live_plan, build_plan, launch_live, validate_plan
+from sdwan_v5.topology_v5 import (
+    _configure_addresses,
+    _flush_route_table_if_present,
+    build_live_plan,
+    build_plan,
+    launch_live,
+    validate_plan,
+)
 from sdwan_v5.edge_agent_v5 import EdgeAgent
 from sdwan_v5.policy_service_v5 import PolicyService
 from sdwan_v5.policy_http import PolicyApplication
@@ -91,6 +98,29 @@ class EdgePolicyTopologyTests(unittest.TestCase):
             self.assertIn(["ip", "route", "replace", "10.1.0.0/24", "dev", "wg-spokes-mpls"], runner.commands)
             self.assertIn(["ip", "route", "replace", "198.18.0.0/24", "via", "192.168.20.254", "dev", "hub1-bb"], runner.commands)
             self.assertTrue(any(command[-2:] == ["-j", "MASQUERADE"] for command in runner.commands))
+            self.assertIn(
+                ["iptables", "-t", "nat", "-A", "SDWAN_V5_HUB_NAT", "-d", "10.100.0.0/24", "-o", "hub1-dc", "-j", "SNAT", "--to-source", "10.100.0.1"],
+                runner.commands,
+            )
+            self.assertTrue(any(
+                command[:7] == ["iptables", "-t", "mangle", "-A", "SDWAN_V5_RPA_IN", "-i", "wg-spokes-mpls"]
+                and "0x1101/0xf1ff" in command
+                for command in runner.commands
+            ))
+
+    def test_spoke_return_affinity_covers_all_six_hub_transport_paths(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = RecordingRunner()
+            agent = EdgeAgent("node1", self.config, Path(directory), runner)
+            agent.install_spoke_return_affinity()
+            commands = [" ".join(command) for command in runner.commands]
+            ingress = [command for command in commands if "-A SDWAN_V5_RPA_IN -i wg-h" in command and "--set-xmark" in command]
+            egress = [command for command in commands if "-A SDWAN_V5_RPA_OUT -o wg-h" in command and "--set-xmark" in command]
+            self.assertEqual(len(ingress), 6)
+            self.assertEqual(len(egress), 6)
+            self.assertTrue(any("-i wg-h1-mpls" in command and "0x1101/0xf1ff" in command for command in ingress))
+            self.assertTrue(any("-i wg-h2-lte" in command and "0x2103/0xf1ff" in command for command in ingress))
+            self.assertTrue(any("CONNMARK --restore-mark --nfmask 0xf7ff --ctmask 0xf7ff" in command for command in commands))
 
     def test_policy_rules_use_portable_owned_priority_replacement(self) -> None:
 
@@ -101,7 +131,11 @@ class EdgePolicyTopologyTests(unittest.TestCase):
             self.assertFalse(any(command[:3] == ["ip", "rule", "replace"] for command in runner.commands))
             self.assertIn(["ip", "rule", "del", "priority", "2001"], runner.commands)
             self.assertIn(["ip", "rule", "add", "priority", "2001", "fwmark", "1/255", "lookup", "101"], runner.commands)
-            self.assertIn(["ip", "rule", "add", "priority", "2101", "fwmark", "4097/12543", "lookup", "1101"], runner.commands)
+            self.assertIn(["ip", "rule", "add", "priority", "1101", "fwmark", "4097/12543", "lookup", "1101"], runner.commands)
+            specific_index = runner.commands.index(["ip", "rule", "add", "priority", "1101", "fwmark", "4097/12543", "lookup", "1101"])
+            generic_index = runner.commands.index(["ip", "rule", "add", "priority", "2001", "fwmark", "1/255", "lookup", "101"])
+            self.assertGreater(specific_index, generic_index)  # command order is irrelevant; numeric priority is authoritative
+            self.assertLess(1101, 2001)
 
     def test_policy_snapshot_exposes_authoritative_destination_intents(self) -> None:
         with TemporaryDirectory() as directory:
@@ -197,6 +231,28 @@ class EdgePolicyTopologyTests(unittest.TestCase):
         self.assertFalse(any(link.transport for link in cloud_gateway_links))
         self.assertFalse(any(link.node1.startswith("node") and link.node2.startswith("cloud_gw") for link in plan.links))
 
+    def test_missing_cloud_policy_table_is_harmless_on_first_launch(self) -> None:
+        class Node:
+            name = "cloud_gw1"
+
+            def pexec(self, command: list[str]) -> tuple[str, str, int]:
+                self.command = command
+                return "", "Error: ipv4: FIB table does not exist.\nFlush terminated", 2
+
+        node = Node()
+        _flush_route_table_if_present(node, 3101)
+        self.assertEqual(node.command, ["ip", "route", "flush", "table", "3101"])
+
+    def test_cloud_policy_table_flush_keeps_unexpected_errors_fatal(self) -> None:
+        class Node:
+            name = "cloud_gw1"
+
+            def pexec(self, command: list[str]) -> tuple[str, str, int]:
+                return "", "RTNETLINK answers: Operation not permitted", 2
+
+        with self.assertRaisesRegex(RuntimeError, "Operation not permitted"):
+            _flush_route_table_if_present(Node(), 3101)
+
     def test_cloud_routes_have_deterministic_primary_and_backup_paths(self) -> None:
         raw = yaml.safe_load((ROOT / "config" / "topology.cloud.yaml").read_text(encoding="utf-8"))
         cloud_config = config_from_mapping(raw)
@@ -217,6 +273,21 @@ class EdgePolicyTopologyTests(unittest.TestCase):
         self.assertIn(["ip", "route", "replace", "10.200.0.0/24", "via", "172.20.2.2", "dev", "h1-c2", "metric", "200"], nodes["hub1"].commands)
         self.assertIn(["ip", "route", "replace", "10.1.0.0/24", "via", "172.20.3.1", "dev", "c1-h2", "metric", "200"], nodes["cloud_gw1"].commands)
         self.assertIn(["ip", "route", "replace", "10.1.0.0/24", "via", "10.200.0.2", "dev", "cloud_app-vpc", "metric", "200"], nodes["cloud_app"].commands)
+        cloud_commands = [" ".join(command) for command in nodes["cloud_gw1"].commands]
+        self.assertTrue(any("CONNMARK --restore-mark --nfmask 0xf7ff --ctmask 0xf7ff" in command for command in cloud_commands))
+        self.assertTrue(any("-i c1-h1" in command and "--set-xmark 0x9100/0xf1ff" in command for command in cloud_commands))
+        self.assertIn(
+            ["ip", "rule", "add", "priority", "1301", "fwmark", "36864/61440", "lookup", "3101"],
+            nodes["cloud_gw1"].commands,
+        )
+        self.assertIn(
+            ["ip", "route", "replace", "10.1.0.0/24", "via", "172.20.1.1", "dev", "c1-h1", "table", "3101"],
+            nodes["cloud_gw1"].commands,
+        )
+        self.assertTrue(any(
+            "-A SDWAN_V5_CLOUD_SNAT -s 10.1.0.0/24 -d 10.200.0.0/24 -o cloud_gw1-vpc -j SNAT --to-source 10.200.0.1" in command
+            for command in cloud_commands
+        ))
 
     def test_launch_live_builds_expected_containernet_lifecycle(self) -> None:
         calls: list[tuple[str, object]] = []
@@ -335,6 +406,8 @@ class EdgePolicyTopologyTests(unittest.TestCase):
             "net.ipv4.conf.default.rp_filter": "0",
             "net.ipv4.conf.all.src_valid_mark": "1",
             "net.ipv4.conf.default.src_valid_mark": "1",
+            "net.ipv4.conf.all.ignore_routes_with_linkdown": "1",
+            "net.ipv4.conf.default.ignore_routes_with_linkdown": "1",
         })
 
         link_calls = [payload for kind, payload in calls if kind == "link"]

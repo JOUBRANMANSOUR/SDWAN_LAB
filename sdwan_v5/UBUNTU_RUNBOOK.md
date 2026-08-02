@@ -199,7 +199,7 @@ SDWAN_TOPOLOGY_CONFIG=$PWD/sdwan_v5/config/topology.cloud.yaml \
   bash sdwan_v5/scripts/run_topology.sh
 ```
 
-After enrollment, use these Containernet checks. Routes are source-preserving private routes, so a Cloud packet must never use direct Internet NAT:
+The physical launcher installs Cloud Gateway `CONNMARK`, tables 3101/3102, scoped Cloud `SNAT`, and `ignore_routes_with_linkdown=1`. Spoke and Hub return-affinity chains are installed during their normal Edge reconciliation. After enrollment, use these Containernet checks:
 
 ```text
 node1_host ping -c 3 10.200.0.10
@@ -209,7 +209,50 @@ hub2 ip route get 10.200.0.10
 cloud_gw1 ip route get 10.1.0.10
 cloud_app ip route get 10.1.0.10
 node1 iptables -t nat -nvL SDWAN_V5_DIRECT_NAT
+node1 iptables -t mangle -nvL SDWAN_V5_RPA_IN
+hub1 iptables -t mangle -nvL SDWAN_V5_RPA_IN
+hub1 iptables -t nat -nvL SDWAN_V5_HUB_NAT
+cloud_gw1 iptables -t mangle -nvL SDWAN_V5_CLOUD_RPA_IN
+cloud_gw1 iptables -t nat -nvL SDWAN_V5_CLOUD_SNAT
+cloud_gw1 ip rule show
+cloud_gw1 ip route show table 3101
+cloud_gw1 ip route show table 3102
 ```
+
+For branch-originated Cloud traffic, `cloud_app` is expected to observe the selected gateway address (`10.200.0.1` or `10.200.0.2`) as the source. This is the mechanism that forces the reply to the same gateway; the direct-breakout chain on the spoke must still return `10.200.0.0/24` and must not masquerade it.
+
+Validate gateway failover with a **new** connection after each state change:
+
+```text
+# Primary hub1 -> cloud_gw1 path.
+node1_host curl -fsS --connect-timeout 5 http://10.200.0.10/healthz
+cloud_gw1 iptables -t nat -nvL SDWAN_V5_CLOUD_SNAT
+
+# Remove only hub1's primary Cloud link. hub1 must select cloud_gw2.
+hub1 ip link set h1-c1 down
+hub1 ip route get 10.200.0.10
+node1_host curl -fsS --connect-timeout 5 http://10.200.0.10/healthz
+cloud_gw2 iptables -t nat -nvL SDWAN_V5_CLOUD_SNAT
+cloud_gw2 conntrack -L -p tcp --dport 80 -o extended
+
+# Roll back.
+hub1 ip link set h1-c1 up
+```
+
+The expected backup request is SNATed to `10.200.0.2`; its reply returns to `cloud_gw2`, restores the hub1/cloud mark, and uses table 3101 through `c2-h1`. Capture `h1-c2`, `c2-h1`, and `cloud_gw2-vpc` to retain proof.
+
+Validate Spoke/Hub/Data-Center affinity separately:
+
+```text
+node1_host curl -fsS --connect-timeout 5 http://10.100.0.10/healthz
+node1 conntrack -L -p tcp --dport 80 -o extended
+hub1 conntrack -L -p tcp --dport 80 -o extended
+hub1 iptables -t nat -nvL SDWAN_V5_HUB_NAT
+node1 ip rule show
+hub1 ip rule show
+```
+
+For this baseline, `dc_app` sees `10.100.0.1` or `10.100.0.2` as the source. Do not claim seamless migration of an existing TCP connection between hubs or Cloud Gateways: `conntrack` state is not synchronized between containers. Test failover with new connections unless `conntrackd` and shared VIP ownership are implemented in a later phase.
 
 Destination-specific SaaS checks (the self-signed laboratory certificate requires `--insecure` only in this lab):
 

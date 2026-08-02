@@ -24,3 +24,11 @@
 | Privileged destination-policy SaaS validation | Containernet: route lookup with mark `4097`; `wg show wg-h1-mpls`; Sensitive HTTPS `curl`; Unknown TCP and UDP `iperf3` | Passed: `198.18.0.20/32` selected `wg-h1-mpls` table `1101`, its peer contained both `.20/32` and `.30/32`, Sensitive API returned `{"service":"sensitive_saas","status":"ok"}`, Unknown TCP delivered 768 KiB at 1.24 Mbit/s receiver rate, and UDP delivered 640 KiB with 0/479 datagrams lost. |
 | Privileged Cloud VPC primary-path validation | Containernet: branch ping/curl, marked route lookup, hub/gateway/app return lookups, and direct-NAT chain | Passed: `node1_host` reached `10.200.0.10` by ICMP and HTTP; node1 selected `wg-h1-mpls` table 1101; hub1 selected `cloud_gw1` over `172.20.1.0/30`; gateway and Cloud application had the intended branch return routes; `10.200.0.0/24` hit the direct-NAT `RETURN` rule, not `MASQUERADE`. Cloud failure convergence is pending a separate live injection. |
 Live conntrack-affinity evidence, cloud, and capacity-performance gates remain pending. Those privileged Ubuntu gates must be executed with the evidence described in [UBUNTU_RUNBOOK.md](UBUNTU_RUNBOOK.md); they are not claimed as passed by static tests.
+
+## Return-path affinity revision (static verification)
+
+| Phase | Exact command | Result |
+|---|---|---|
+| Spoke/Hub/Cloud return-affinity implementation | `cd /mnt/data/sdwan_v5_extract; python3 -m pytest -q sdwan_v5/tests` | Passed: 43 tests, 1 skipped. Covers six spoke ingress/egress paths, hub connmark and DC SNAT, Cloud Gateway connmark/SNAT and tables 3101/3102, policy-rule priority ordering, and creation-time linkdown sysctls. |
+
+This is static/unit evidence. The privileged Containernet acceptance gate remains pending until the new code is rebuilt, enrolled/reconciled, and the primary/backup captures in `RETURN_PATH_AFFINITY.md` are retained.

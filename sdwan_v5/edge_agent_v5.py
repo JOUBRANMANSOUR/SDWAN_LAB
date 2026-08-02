@@ -158,6 +158,99 @@ class EdgeAgent:
         self._run("iptables", "-t", "mangle", "-A", chain, "-m", "mark", "--mark", f"0/{hex(marks.terminal_bit)}", "-j", "NFQUEUE", "--queue-num", str(queue_number), "--queue-bypass")
         self._run("iptables", "-t", "mangle", "-A", chain, "-j", "CONNMARK", "--save-mark", "--nfmask", connection_mask, "--ctmask", connection_mask)
 
+    def _install_return_path_affinity(self, interface_marks: Mapping[str, int]) -> None:
+        """Persist the ingress/egress path selected for every routed connection.
+
+        Marks are local to one Linux network namespace; they are not carried in
+        a WireGuard packet.  Every spoke and hub therefore records its own
+        path decision in conntrack.  The PREROUTING chain restores a known
+        connection or stamps a new connection from its ingress interface.  The
+        POSTROUTING chain records the route selected for a connection that was
+        initiated from the opposite side (for example DC-to-branch).
+
+        The terminal bit prevents the reverse direction of an ingress-pinned
+        flow from being sent through nDPI again and changing its transport
+        slot.  Only the v5-owned connection bits are saved/restored.
+        """
+        if not interface_marks:
+            raise ValueError("return-path affinity requires at least one path interface")
+        marks = self.config.settings.marks
+        connection_mask = hex(marks.connection_mask)
+        affinity_mask = hex(marks.affinity_mask)
+        stamp_mask = hex(marks.affinity_mask | marks.terminal_bit)
+        ingress_chain = "SDWAN_V5_RPA_IN"
+        egress_chain = "SDWAN_V5_RPA_OUT"
+
+        self._ensure_chain("mangle", ingress_chain)
+        self._ensure_chain("mangle", egress_chain)
+        self._ensure_rule("mangle", "PREROUTING", "-j", ingress_chain)
+        self._ensure_rule("mangle", "POSTROUTING", "-j", egress_chain)
+        self._run("iptables", "-t", "mangle", "-F", ingress_chain)
+        self._run("iptables", "-t", "mangle", "-F", egress_chain)
+
+        self._run(
+            "iptables", "-t", "mangle", "-A", ingress_chain,
+            "-j", "CONNMARK", "--restore-mark",
+            "--nfmask", connection_mask, "--ctmask", connection_mask,
+        )
+        for interface, affinity_mark in interface_marks.items():
+            if affinity_mark <= 0 or affinity_mark & ~marks.affinity_mask:
+                raise ValueError(f"invalid return-affinity mark for {interface}")
+            stamped_mark = affinity_mark | marks.terminal_bit
+            self._run(
+                "iptables", "-t", "mangle", "-A", ingress_chain,
+                "-i", interface, "-m", "conntrack", "--ctstate", "NEW",
+                "-m", "mark", "--mark", f"0/{affinity_mask}",
+                "-j", "MARK", "--set-xmark", f"{hex(stamped_mark)}/{stamp_mask}",
+            )
+        self._run(
+            "iptables", "-t", "mangle", "-A", ingress_chain,
+            "-j", "CONNMARK", "--save-mark",
+            "--nfmask", connection_mask, "--ctmask", connection_mask,
+        )
+
+        for interface, affinity_mark in interface_marks.items():
+            stamped_mark = affinity_mark | marks.terminal_bit
+            self._run(
+                "iptables", "-t", "mangle", "-A", egress_chain,
+                "-o", interface, "-m", "conntrack", "--ctstate", "NEW",
+                "-m", "mark", "--mark", f"0/{affinity_mask}",
+                "-j", "MARK", "--set-xmark", f"{hex(stamped_mark)}/{stamp_mask}",
+            )
+            self._run(
+                "iptables", "-t", "mangle", "-A", egress_chain,
+                "-o", interface, "-m", "conntrack", "--ctstate", "NEW",
+                "-m", "mark", "--mark", f"{hex(stamped_mark)}/{stamp_mask}",
+                "-j", "CONNMARK", "--save-mark",
+                "--nfmask", connection_mask, "--ctmask", connection_mask,
+            )
+
+    def install_spoke_return_affinity(self) -> None:
+        """Pin every spoke flow to the hub and transport that carried it."""
+        if self.site not in self.config.sites:
+            raise ValueError("spoke return affinity may be installed only on a spoke")
+        marks = self.config.settings.marks
+        interface_marks: dict[str, int] = {}
+        for hub in ("hub1", "hub2"):
+            hub_bit = marks.hub1_bit if hub == "hub1" else marks.hub2_bit
+            for transport in self.config.transports.values():
+                interface_marks[self.config.target(hub, transport.name).interface_name] = (
+                    transport.route_slot | hub_bit
+                )
+        self._install_return_path_affinity(interface_marks)
+
+    def install_hub_return_affinity(self) -> None:
+        """Pin hub return traffic to the ingress spoke transport."""
+        if self.site not in self.config.hubs:
+            raise ValueError("hub return affinity may be installed only on a hub")
+        marks = self.config.settings.marks
+        hub_bit = marks.hub1_bit if self.site == "hub1" else marks.hub2_bit
+        interface_marks = {
+            f"wg-spokes-{transport.name}": transport.route_slot | hub_bit
+            for transport in self.config.transports.values()
+        }
+        self._install_return_path_affinity(interface_marks)
+
     def _intent_mark(self, desired: Mapping[str, Any], intent: Mapping[str, Any]) -> tuple[int, str, EgressMode]:
         marks = self.config.settings.marks
         allowed = {str(value) for value in intent.get("allowed_egress", ())}
@@ -215,6 +308,7 @@ class EdgeAgent:
         self._ensure_hub_overlay_allowed_ips(desired, hub_overlay_prefixes)
         default_mark, _, _ = self._intent_mark(desired, default_intent)
         self.install_policy_rules()
+        self.install_spoke_return_affinity()
         self.install_scoped_direct_nat(str(self.config.sites[self.site].lan_network), {"bb": f"{self.site}-bb", "lte": f"{self.site}-lte"})
         self._start_native_classifier(4100)
         self.install_connmark_rules(f"{self.site}-lan", prefix_marks, default_mark)
@@ -235,7 +329,7 @@ class EdgeAgent:
 
 
     def install_hub_backhaul(self) -> None:
-        """Install symmetric branch returns and scoped SaaS backhaul NAT on a hub."""
+        """Install hub return affinity plus scoped DC/SaaS source NAT."""
         if self.site not in self.config.hubs:
             raise ValueError("hub backhaul may be installed only on a hub")
         spoke_interface = "wg-spokes-mpls"
@@ -244,13 +338,21 @@ class EdgeAgent:
         transport = next(name for name, item in self.config.transports.items() if item.internet_capable)
         uplink = f"{self.site}-{transport}"
         self._run("ip", "route", "replace", str(self.config.saas_network), "via", str(self.config.saas_transport_ips[transport]), "dev", uplink)
+        self.install_hub_policy_rules()
+        self.install_hub_return_affinity()
         chain = "SDWAN_V5_HUB_NAT"
         self._ensure_chain("nat", chain)
         for profile in self.config.sites.values():
             self._ensure_rule("nat", "POSTROUTING", "-s", str(profile.lan_network), "-j", chain)
+        self._run("iptables", "-t", "nat", "-F", chain)
+        self._run(
+            "iptables", "-t", "nat", "-A", chain,
+            "-d", str(self.config.data_center_network), "-o", f"{self.site}-dc",
+            "-j", "SNAT", "--to-source", str(self.config.data_center_hub_ips[self.site]),
+        )
         for prefix in self.config.protected_private_prefixes:
-            self._ensure_rule("nat", chain, "-d", str(prefix), "-j", "RETURN")
-        self._ensure_rule("nat", chain, "-d", str(self.config.saas_network), "-o", uplink, "-j", "MASQUERADE")
+            self._run("iptables", "-t", "nat", "-A", chain, "-d", str(prefix), "-j", "RETURN")
+        self._run("iptables", "-t", "nat", "-A", chain, "-d", str(self.config.saas_network), "-o", uplink, "-j", "MASQUERADE")
 
     def _replace_owned_rule(self, priority: int, mark: str, table: int) -> None:
         """Replace a rule in the v5-reserved priority range portably.
@@ -277,7 +379,26 @@ class EdgeAgent:
                 target = self.config.target(hub, transport.name)
                 mark = transport.route_slot | hub_bit
                 mask = marks.route_mask | marks.target_hub_mask
-                self._replace_owned_rule(1000 + target.route_table, f"{mark}/{mask}", target.route_table)
+                # Hub-specific affinity must be evaluated before the generic
+                # transport-slot rule at priorities 2001..2003.
+                try:
+                    self._run("ip", "rule", "del", "priority", str(1000 + target.route_table))
+                except CommandError as exc:
+                    if "No such file" not in str(exc) and "Cannot find" not in str(exc):
+                        raise
+                self._replace_owned_rule(target.route_table, f"{mark}/{mask}", target.route_table)
+
+    def install_hub_policy_rules(self) -> None:
+        """Install only this hub's transport-affinity route-table rules."""
+        if self.site not in self.config.hubs:
+            raise ValueError("hub policy rules may be installed only on a hub")
+        marks = self.config.settings.marks
+        hub_bit = marks.hub1_bit if self.site == "hub1" else marks.hub2_bit
+        mask = marks.route_mask | marks.target_hub_mask
+        for transport in self.config.transports.values():
+            target = self.config.target(self.site, transport.name)
+            mark = transport.route_slot | hub_bit
+            self._replace_owned_rule(target.route_table, f"{mark}/{mask}", target.route_table)
 
     def install_scoped_direct_nat(self, lan_prefix: str, uplinks: Mapping[str, str]) -> None:
         """NAT only direct-Internet traffic; private DC/cloud/branch prefixes return."""

@@ -21,7 +21,7 @@ class ManagementTests(unittest.TestCase):
             client=self.app(directory); headers={'Authorization':'Bearer '+self.token(client,'admin')}
             session=client.post('/api/v1/chat/sessions',headers=headers).json()['session_id']
             response=client.post('/api/v1/chat/sessions/%s/messages'%session,headers=headers,json={'prompt':'status'})
-            self.assertEqual(response.status_code,200); self.assertEqual(response.json()['agent_gateway'],'DISABLED')
+            self.assertEqual(response.status_code,200); self.assertEqual(response.json()['agent_gateway'],'UNAVAILABLE')
             self.assertEqual(len(client.get('/api/v1/chat/sessions/%s'%session,headers=headers).json()),2)
             self.assertTrue(client.get('/api/v1/audit',headers=headers).json())
     def test_mcp_requires_token_and_mcp_scope(self):

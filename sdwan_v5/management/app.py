@@ -1,6 +1,6 @@
 """FastAPI read-only management REST API and minimal SSE/UI surface."""
 from __future__ import annotations
-import asyncio, json
+import asyncio, json, uuid
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -16,10 +16,12 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
     config=config or ManagementConfig.from_env(); service=ManagementService(config); app=FastAPI(title="SD-WAN v5 Management", version="1.0.0")
     @app.middleware("http")
     async def audit_request(request: Request, call_next):
+        request_id = str(uuid.uuid4())
         response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
         actor = getattr(request.state, "actor", None)
         if actor and request.url.path.startswith("/api/v1/") and request.url.path != "/api/v1/auth/login":
-            service.audit.add(actor, "API_READ", request.url.path, str(response.status_code))
+            service.audit.add(actor, "API_READ", request.url.path, str(response.status_code), request_id)
         return response
     bearer = HTTPBearer(auto_error=False)
     def principal(request: Request, credentials: HTTPAuthorizationCredentials = Depends(bearer)) -> Principal:
@@ -41,6 +43,8 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
         if record is None or record[0] != value.password: raise HTTPException(401,"invalid credentials")
         user=Principal(value.username,record[1],scopes_for(record[1])); service.audit.add(user.subject,"LOGIN","session","ok")
         return {"access_token":issue(config.signing_secret,user),"token_type":"bearer","role":user.role,"scopes":user.scopes}
+    @app.get("/api/v1/system/version")
+    def version(user: Principal = Depends(require("read:health"))): return {"api_version":"v1","service_version":"1.0.0","mode":"read-only"}
     @app.get("/api/v1/system/health")
     def health(user: Principal = Depends(require("read:health"))): return service.health()
     @app.get("/api/v1/system/config")

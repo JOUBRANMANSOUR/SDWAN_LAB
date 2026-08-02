@@ -14,7 +14,7 @@ class ManagementTests(unittest.TestCase):
     def test_viewer_reads_health_but_not_routes(self):
         with tempfile.TemporaryDirectory() as directory:
             client=self.app(directory); headers={'Authorization':'Bearer '+self.token(client,'viewer')}
-            self.assertEqual(client.get('/api/v1/system/health',headers=headers).status_code,200)
+            health=client.get('/api/v1/system/health',headers=headers); self.assertEqual(health.status_code,200); self.assertIn('X-Request-ID',health.headers)
             self.assertEqual(client.get('/api/v1/routes/ownership',headers=headers).status_code,403)
     def test_platform_admin_chat_is_persisted_and_read_only(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -23,3 +23,4 @@ class ManagementTests(unittest.TestCase):
             response=client.post('/api/v1/chat/sessions/%s/messages'%session,headers=headers,json={'prompt':'status'})
             self.assertEqual(response.status_code,200); self.assertEqual(response.json()['agent_gateway'],'DISABLED')
             self.assertEqual(len(client.get('/api/v1/chat/sessions/%s'%session,headers=headers).json()),2)
+            self.assertTrue(client.get('/api/v1/audit',headers=headers).json())

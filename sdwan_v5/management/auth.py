@@ -7,10 +7,10 @@ from typing import Iterable
 
 ROLES = {"VIEWER", "NETWORK_ADMIN", "AUDITOR", "PLATFORM_ADMIN"}
 ROLE_SCOPES = {
-    "VIEWER": {"read:topology", "read:operations", "read:health"},
-    "NETWORK_ADMIN": {"read:topology", "read:operations", "read:health", "read:routes", "read:tunnels", "read:events"},
-    "AUDITOR": {"read:topology", "read:operations", "read:health", "read:audit", "read:events"},
-    "PLATFORM_ADMIN": {"read:*", "chat:use"},
+    "VIEWER": {"network:read", "mcp:read"},
+    "NETWORK_ADMIN": {"network:read", "network:operate", "mcp:read", "mcp:operate"},
+    "AUDITOR": {"network:read", "audit:read", "mcp:read"},
+    "PLATFORM_ADMIN": {"network:read", "network:operate", "audit:read", "users:admin", "mcp:read", "mcp:operate", "chat:use"},
 }
 
 @dataclass(frozen=True)
@@ -49,4 +49,4 @@ def verify(secret: str, token: str) -> Principal:
     return Principal(str(payload["sub"]), str(payload["role"]), tuple(payload["scopes"]))
 
 def allowed(principal: Principal, required: str) -> bool:
-    return "read:*" in principal.scopes or required in principal.scopes
+    return required in principal.scopes

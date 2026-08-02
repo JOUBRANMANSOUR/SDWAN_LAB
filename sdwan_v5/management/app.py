@@ -44,55 +44,86 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
         user=Principal(value.username,record[1],scopes_for(record[1])); service.audit.add(user.subject,"LOGIN","session","ok")
         return {"access_token":issue(config.signing_secret,user),"token_type":"bearer","role":user.role,"scopes":user.scopes}
     @app.get("/api/v1/system/version")
-    def version(user: Principal = Depends(require("read:health"))): return {"api_version":"v1","service_version":"1.0.0","mode":"read-only"}
+    def version(user: Principal = Depends(require("network:read"))): return {"api_version":"v1","service_version":"1.0.0","mode":"read-only"}
     @app.get("/api/v1/system/health")
-    def health(user: Principal = Depends(require("read:health"))): return service.health()
+    def health(user: Principal = Depends(require("network:read"))): return service.health()
     @app.get("/api/v1/system/config")
-    def system_config(user: Principal = Depends(require("read:health"))): return {"topology_config":str(config.topology),"policy_db_configured":str(config.policy_db),"ztp_db_configured":str(config.ztp_db),"agent_gateway":"configured but fail-closed" if config.agent_command else "disabled"}
+    def system_config(user: Principal = Depends(require("network:read"))): return {"topology_config":str(config.topology),"policy_db_configured":str(config.policy_db),"ztp_db_configured":str(config.ztp_db),"agent_gateway":"configured but fail-closed" if config.agent_command else "disabled"}
     @app.get("/api/v1/system/capabilities")
-    def capabilities(user: Principal = Depends(require("read:health"))): return {"read_only":True,"rest":True,"mcp":"/mcp","agent_gateway":bool(config.agent_command),"unsupported":["policy writes","ztp writes","routing writes","docker exec from browser"]}
+    def capabilities(user: Principal = Depends(require("network:read"))): return {"read_only":True,"rest":True,"mcp":"/mcp","agent_gateway":bool(config.agent_command),"unsupported":["policy writes","ztp writes","routing writes","docker exec from browser"]}
     @app.get("/api/v1/dashboard")
-    def dashboard(user: Principal = Depends(require("read:operations"))): return service.dashboard()
+    def dashboard(user: Principal = Depends(require("network:read"))): return service.dashboard()
     @app.get("/api/v1/topology")
-    def topology(user: Principal = Depends(require("read:topology"))): return service.topology_view()
+    def topology(user: Principal = Depends(require("network:read"))): return service.topology_view()
     @app.get("/api/v1/topology/nodes")
-    def topology_nodes(user: Principal = Depends(require("read:topology"))): return service.topology_nodes()
+    def topology_nodes(user: Principal = Depends(require("network:read"))): return service.topology_nodes()
     @app.get("/api/v1/topology/links")
-    def topology_links(user: Principal = Depends(require("read:topology"))): return service.topology_links()
+    def topology_links(user: Principal = Depends(require("network:read"))): return service.topology_links()
     @app.get("/api/v1/sites")
-    def sites(user: Principal = Depends(require("read:operations"))): return service.sites()
+    def sites(user: Principal = Depends(require("network:read"))): return service.sites()
     @app.get("/api/v1/sites/{site}/desired")
-    def desired(site: str,user: Principal = Depends(require("read:operations"))): return service.desired(site)
+    def desired(site: str,user: Principal = Depends(require("network:read"))): return service.desired(site)
+    @app.get("/api/v1/sites/{site}")
+    def site(site: str,user: Principal = Depends(require("network:read"))):
+        rows=[row for row in service.sites() if row["site"] == site]
+        if not rows: raise HTTPException(404,"site not found")
+        return {"configured":rows[0],"desired":service.desired(site),"observed":service.runtime_view(site)}
+    @app.get("/api/v1/sites/{site}/desired-state")
+    def desired_state(site: str,user: Principal = Depends(require("network:read"))): return {"availability":"AVAILABLE","state":service.desired(site)}
+    @app.get("/api/v1/sites/{site}/applied-state")
+    def applied_state(site: str,user: Principal = Depends(require("network:read"))): return {"availability":"AVAILABLE","state":service.desired(site)}
+    @app.get("/api/v1/sites/{site}/actual-state")
+    def actual_state(site: str,user: Principal = Depends(require("network:read"))): return service.runtime_view(site)
+    @app.get("/api/v1/sites/{site}/events")
+    def site_events(site: str,user: Principal = Depends(require("network:read"))): return [e for e in service.events() if e.get("target") == site]
     @app.get("/api/v1/sites/{site}/runtime")
-    def runtime(site: str,user: Principal = Depends(require("read:tunnels"))): return service.runtime_view(site)
+    def runtime(site: str,user: Principal = Depends(require("network:read"))): return service.runtime_view(site)
     @app.get("/api/v1/sites/{site}/tunnels")
-    def tunnels(site: str,user: Principal = Depends(require("read:tunnels"))): return service.runtime_view(site).get("tunnels")
+    def tunnels(site: str,user: Principal = Depends(require("network:read"))): return service.runtime_view(site).get("tunnels")
     @app.get("/api/v1/sites/{site}/routes")
-    def routes(site: str,user: Principal = Depends(require("read:routes"))): return service.runtime_view(site).get("routes")
+    def routes(site: str,user: Principal = Depends(require("network:read"))): return service.runtime_view(site).get("routes")
     @app.get("/api/v1/sites/{site}/rules")
-    def rules(site: str,user: Principal = Depends(require("read:routes"))): return service.runtime_view(site).get("rules")
+    def rules(site: str,user: Principal = Depends(require("network:read"))): return service.runtime_view(site).get("rules")
+    @app.get("/api/v1/hubs")
+    def hubs(user: Principal = Depends(require("network:read"))): return [service.hub_view(name) for name in service.topology.hubs]
+    @app.get("/api/v1/hubs/{hub}/tunnels")
+    def hub_tunnels(hub: str,user: Principal = Depends(require("network:read"))): return service.runtime_view(hub).get("tunnels")
+    @app.get("/api/v1/hubs/{hub}/routes")
+    def hub_routes(hub: str,user: Principal = Depends(require("network:read"))): return service.runtime_view(hub).get("routes")
+    @app.get("/api/v1/hubs/{hub}/return-affinity")
+    def hub_affinity(hub: str,user: Principal = Depends(require("network:read"))): return {"availability":"PARTIALLY_AVAILABLE","design":"connmark return-affinity; inspect runtime rules endpoint"}
     @app.get("/api/v1/hubs/{hub}")
-    def hub(hub: str,user: Principal = Depends(require("read:operations"))): return service.hub_view(hub)
+    def hub(hub: str,user: Principal = Depends(require("network:read"))): return service.hub_view(hub)
+    @app.get("/api/v1/data-center/routes")
+    def dc_routes(user: Principal = Depends(require("network:read"))): return {"availability":"UNAVAILABLE","reason":"no Data Center router runtime adapter"}
+    @app.get("/api/v1/data-center/return-affinity")
+    def dc_affinity(user: Principal = Depends(require("network:read"))): return {"availability":"PARTIALLY_AVAILABLE","design":"hub scoped SNAT plus connmark"}
     @app.get("/api/v1/data-center")
-    def data_center(user: Principal = Depends(require("read:topology"))): return service.network_view("data-center")
+    def data_center(user: Principal = Depends(require("network:read"))): return service.network_view("data-center")
+    @app.get("/api/v1/saas/destinations")
+    def saas_destinations(user: Principal = Depends(require("network:read"))): return [{"name":service.topology.saas_app_name,"ip":str(service.topology.saas_ip),"type":"nginx-test-service"},{"name":"sensitive_saas","ip":"198.18.0.20","type":"test-service"},{"name":"unknown_saas","ip":"198.18.0.30","type":"test-service"}]
+    @app.get("/api/v1/saas/destinations/{destination}")
+    def saas_destination(destination: str,user: Principal = Depends(require("network:read"))): return {"availability":"CONFIGURED","destination":destination,"policy":service.destination_policy()}
+    @app.get("/api/v1/saas/destinations/{destination}/reachability")
+    def saas_reachability(destination: str,user: Principal = Depends(require("network:read"))): return {"availability":"UNAVAILABLE","reason":"no active HTTP probe adapter"}
     @app.get("/api/v1/saas")
-    def saas(user: Principal = Depends(require("read:topology"))): return service.network_view("saas")
+    def saas(user: Principal = Depends(require("network:read"))): return service.network_view("saas")
     @app.get("/api/v1/cloud-vpc")
-    def cloud(user: Principal = Depends(require("read:topology"))): return service.network_view("cloud-vpc")
+    def cloud(user: Principal = Depends(require("network:read"))): return service.network_view("cloud-vpc")
     @app.get("/api/v1/routes/ownership")
-    def ownership(user: Principal = Depends(require("read:routes"))): return service.ownership()
+    def ownership(user: Principal = Depends(require("network:read"))): return service.ownership()
     @app.get("/api/v1/policy/versions")
-    def policy_versions(user: Principal = Depends(require("read:operations"))): return service.policy_versions()
+    def policy_versions(user: Principal = Depends(require("network:read"))): return service.policy_versions()
     @app.get("/api/v1/policy/destination")
-    def destination_policy(user: Principal = Depends(require("read:operations"))): return service.destination_policy()
+    def destination_policy(user: Principal = Depends(require("network:read"))): return service.destination_policy()
     @app.get("/api/v1/desired-state/summary")
-    def desired_summary(user: Principal = Depends(require("read:operations"))): return service.desired_summary()
+    def desired_summary(user: Principal = Depends(require("network:read"))): return service.desired_summary()
     @app.get("/api/v1/ztp/devices")
-    def devices(user: Principal = Depends(require("read:operations"))): return service.ztp_devices()
+    def devices(user: Principal = Depends(require("network:read"))): return service.ztp_devices()
     @app.get("/api/v1/events")
-    def events(user: Principal = Depends(require("read:events"))): return service.events()
+    def events(user: Principal = Depends(require("network:read"))): return service.events()
     @app.get("/api/v1/audit")
-    def audit(user: Principal = Depends(require("read:audit"))): return service.audit.list()
+    def audit(user: Principal = Depends(require("audit:read"))): return service.audit.list()
     @app.post("/api/v1/chat/sessions")
     def create_chat(user: Principal = Depends(require("chat:use"))):
         return {"session_id":service.audit.create_session(user.subject)}
@@ -101,7 +132,7 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
     @app.post("/api/v1/chat/sessions/{session_id}/messages")
     def chat(session_id: int,value: ChatRequest,user: Principal = Depends(require("chat:use"))): return service.chat(user.subject,session_id,value.prompt)
     @app.get("/api/v1/events/stream")
-    async def stream(user: Principal = Depends(require("read:events"))):
+    async def stream(user: Principal = Depends(require("network:read"))):
         async def generate():
             previous = None
             for _ in range(30):

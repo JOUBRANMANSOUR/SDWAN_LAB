@@ -15,7 +15,7 @@ class ManagementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             client=self.app(directory); headers={'Authorization':'Bearer '+self.token(client,'viewer')}
             health=client.get('/api/v1/system/health',headers=headers); self.assertEqual(health.status_code,200); self.assertIn('X-Request-ID',health.headers)
-            self.assertEqual(client.get('/api/v1/routes/ownership',headers=headers).status_code,403)
+            self.assertEqual(client.get('/api/v1/audit',headers=headers).status_code,403)
     def test_platform_admin_chat_is_persisted_and_read_only(self):
         with tempfile.TemporaryDirectory() as directory:
             client=self.app(directory); headers={'Authorization':'Bearer '+self.token(client,'admin')}

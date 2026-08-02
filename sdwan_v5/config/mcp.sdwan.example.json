@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "sdwan-management-mcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:8090/mcp",
+      "headers": {"Authorization": "Bearer ${SDWAN_MCP_TOKEN}"}
+    }
+  }
+}

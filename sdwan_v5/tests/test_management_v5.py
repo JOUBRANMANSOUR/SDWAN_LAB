@@ -24,3 +24,11 @@ class ManagementTests(unittest.TestCase):
             self.assertEqual(response.status_code,200); self.assertEqual(response.json()['agent_gateway'],'DISABLED')
             self.assertEqual(len(client.get('/api/v1/chat/sessions/%s'%session,headers=headers).json()),2)
             self.assertTrue(client.get('/api/v1/audit',headers=headers).json())
+    def test_mcp_requires_token_and_mcp_scope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client=self.app(directory)
+            self.assertEqual(client.post('/mcp',json={'method':'initialize','id':1}).status_code,401)
+            token=self.token(client,'viewer'); headers={'Authorization':'Bearer '+token}
+            response=client.post('/mcp',headers=headers,json={'method':'tools/list','id':1})
+            self.assertEqual(response.status_code,200)
+            self.assertIn('tools',response.json()['result'])

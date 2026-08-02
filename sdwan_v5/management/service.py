@@ -6,12 +6,14 @@ from ..topology_v5 import build_live_plan
 from .config import ManagementConfig
 from .repository import ReadOnlyState, AuditStore
 from .runtime import RuntimeAdapter
+from .agent import AvailabilityRunner
 
 class ManagementService:
     def __init__(self, config: ManagementConfig):
         self.config, self.topology = config, load_config(config.topology)
         self.state, self.audit = ReadOnlyState(config.policy_db, config.ztp_db), AuditStore(config.state_dir)
         self.runtime = RuntimeAdapter(self.topology)
+        self.agent_runner = AvailabilityRunner()
     def health(self) -> dict[str, Any]:
         return {"status":"ok", "mode":"read-only", "sources":{"topology":"AVAILABLE", "policy_db":"AVAILABLE" if self.config.policy_db.is_file() else "UNAVAILABLE", "ztp_db":"AVAILABLE" if self.config.ztp_db.is_file() else "UNAVAILABLE", "runtime":"UNAVAILABLE (adapter not configured)"}}
     def topology_view(self) -> dict[str, Any]:
@@ -42,10 +44,11 @@ class ManagementService:
 
     def chat(self, actor: str, session: int, prompt: str) -> dict[str, Any]:
         self.audit.add_message(session, actor, prompt)
-        reply = "Read-only diagnosis: " + ("runtime adapter is available for configured nodes." if self.config.agent_command else "external Agent Gateway is disabled; use dashboard, site runtime, and events endpoints.")
+        result = self.agent_runner.run(prompt, session)
+        reply = result.reply
         self.audit.add_message(session, "management", reply)
-        self.audit.add(actor, "CHAT", str(session), "ok", "read-only summary")
-        return {"session_id":session,"reply":reply,"agent_gateway":"CONFIGURED_NOT_EXECUTED" if self.config.agent_command else "DISABLED","evidence":{"health":self.health(),"ownership":self.ownership()}}
+        self.audit.add(actor, "CHAT", str(session), result.status, "read-only agent boundary")
+        return {"session_id":session,"reply":reply,"agent_gateway":result.status,"events":list(result.events),"evidence":{"health":self.health(),"ownership":self.ownership()}}
 
     def hub_view(self, hub: str) -> dict[str, Any]:
         if hub not in self.topology.hubs: return {"availability":"UNAVAILABLE", "reason":"unknown hub"}

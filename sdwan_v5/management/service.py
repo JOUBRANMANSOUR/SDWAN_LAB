@@ -4,11 +4,13 @@ from typing import Any
 from ..common.model import load_config
 from .config import ManagementConfig
 from .repository import ReadOnlyState, AuditStore
+from .runtime import RuntimeAdapter
 
 class ManagementService:
     def __init__(self, config: ManagementConfig):
         self.config, self.topology = config, load_config(config.topology)
         self.state, self.audit = ReadOnlyState(config.policy_db, config.ztp_db), AuditStore(config.state_dir)
+        self.runtime = RuntimeAdapter(self.topology)
     def health(self) -> dict[str, Any]:
         return {"status":"ok", "mode":"read-only", "sources":{"topology":"AVAILABLE", "policy_db":"AVAILABLE" if self.config.policy_db.is_file() else "UNAVAILABLE", "ztp_db":"AVAILABLE" if self.config.ztp_db.is_file() else "UNAVAILABLE", "runtime":"UNAVAILABLE (adapter not configured)"}}
     def topology_view(self) -> dict[str, Any]:
@@ -24,3 +26,9 @@ class ManagementService:
         return self.state.rows("ztp", "SELECT device_id,assigned_site,status,public_key_fingerprint,created_at,updated_at FROM devices ORDER BY assigned_site")
     def events(self) -> list[dict[str, Any]]:
         return self.state.rows("policy", "SELECT actor,action,target,reason,result,before_version,after_version,created_at FROM policy_audit_events ORDER BY id DESC LIMIT 200")
+
+    def runtime_view(self, site: str) -> dict[str, Any]:
+        if site not in self.topology.site_names: return {"availability":"UNAVAILABLE", "reason":"unknown site"}
+        return {"site":site,"links":self.runtime.links(site),"tunnels":self.runtime.tunnels(site),"routes":self.runtime.routes(site),"rules":self.runtime.rules(site),"failover":self.runtime.failover(site),"classifier":self.runtime.classifier(site)}
+    def dashboard(self) -> dict[str, Any]:
+        return {"health":self.health(),"topology":self.topology_view(),"sites":self.sites(),"ownership":self.ownership(),"devices":self.ztp_devices()}

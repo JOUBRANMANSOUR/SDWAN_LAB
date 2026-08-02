@@ -1,13 +1,13 @@
-# Management platform
+# SD-WAN v5 management architecture
 
-Run with the existing Ryu environment:
+The management platform is a separate FastAPI process on `127.0.0.1:8090`. It reads topology through the validated model, service state through SQLite `mode=ro`, and optional live state through a fixed Docker inspection allow-list. Its own audit/chat database is separate from Policy and ZTP databases.
 
-```bash
-source ~/ryu-venv38/bin/activate
-cd /mnt/data/sdwan-lab
-set -a; source sdwan_v5/.env.example; set +a
-export SDWAN_MANAGEMENT_SECRET="replace-this"
-PYTHONPATH=$PWD python -m sdwan_v5.management.main
+```text
+Browser / REST / MCP
+        | bearer RBAC
+FastAPI ManagementService
+   | config model | read-only SQLite | fixed Docker reads
+Policy/ZTP state  topology.yaml      mn.<known-node>
 ```
 
-Use `POST /api/v1/auth/login`, then send its bearer token to read-only `/api/v1` endpoints. Roles: VIEWER (topology/health), NETWORK_ADMIN (routes/tunnels/events), AUDITOR (audit/events), PLATFORM_ADMIN (all reads/chat). `/mcp` exposes only read-only tools. Runtime availability is reported honestly; no REST/MCP endpoint changes fabric state.
+No browser request can select a Docker command, shell command, container, database SQL expression, route, tunnel, policy, ZTP action, or topology mutation. nDPI remains in Docker and outside Ryu; Ryu remains underlay-only. Runtime endpoints mark stopped/unavailable resources as `UNAVAILABLE`.

@@ -39,3 +39,13 @@ class ManagementService:
         self.audit.add_message(session, "management", reply)
         self.audit.add(actor, "CHAT", str(session), "ok", "read-only summary")
         return {"session_id":session,"reply":reply,"agent_gateway":"CONFIGURED_NOT_EXECUTED" if self.config.agent_command else "DISABLED","evidence":{"health":self.health(),"ownership":self.ownership()}}
+
+    def hub_view(self, hub: str) -> dict[str, Any]:
+        if hub not in self.topology.hubs: return {"availability":"UNAVAILABLE", "reason":"unknown hub"}
+        return {"hub":hub,"configured":{"management_ip":str(self.topology.hubs[hub].management_ip)},"runtime":self.runtime_view(hub)}
+    def network_view(self, kind: str) -> dict[str, Any]:
+        c=self.topology
+        if kind == "data-center": return {"network":str(c.data_center_network),"endpoint":str(c.data_center_app_ip),"name":c.data_center_app_name,"return_affinity":"hub scoped SNAT plus connmark"}
+        if kind == "saas": return {"network":str(c.saas_network),"endpoint":str(c.saas_ip),"name":c.saas_app_name,"egress":"policy controlled direct internet or hub backhaul"}
+        if kind == "cloud-vpc": return {"enabled":c.cloud_vpc.enabled,"network":str(c.cloud_vpc.network),"endpoint":str(c.cloud_vpc.app_ip),"gateways":list(c.cloud_vpc.active_gateways),"availability":"CONFIGURED" if c.cloud_vpc.enabled else "DISABLED"}
+        return {"availability":"UNAVAILABLE", "reason":"unknown network view"}

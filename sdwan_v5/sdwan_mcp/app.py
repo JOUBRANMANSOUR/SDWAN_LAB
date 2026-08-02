@@ -10,7 +10,7 @@ class MCPRequest(BaseModel):
 def install_mcp(app, service, authenticate):
     @app.post("/mcp")
     def mcp(request: MCPRequest, user: Principal = Depends(authenticate)):
-        tools={"system_health":service.health,"topology_get":service.topology_view,"sites_list":service.sites,"route_ownership_list":service.ownership,"ztp_devices_list":service.ztp_devices,"events_list":service.events}
+        tools={"system_health":service.health,"topology_get":service.topology_view,"sites_list":service.sites,"route_ownership_list":service.ownership,"ztp_devices_list":service.ztp_devices,"events_list":service.events,"dashboard_get":service.dashboard}
         if request.method == "initialize": return {"jsonrpc":"2.0","id":request.id,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"sdwan-v5","version":"1.0"},"capabilities":{"tools":{}}}}
         if request.method == "tools/list": return {"jsonrpc":"2.0","id":request.id,"result":{"tools":[{"name":name,"description":"Read-only SD-WAN management query","inputSchema":{"type":"object","properties":{}}} for name in sorted(tools)]}}
         if request.method == "tools/call":

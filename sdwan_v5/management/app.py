@@ -58,6 +58,6 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
             yield "event: snapshot\ndata: " + json.dumps(service.events()) + "\n\n"
         return StreamingResponse(generate(),media_type="text/event-stream")
     @app.get("/", response_class=HTMLResponse)
-    def ui(): return "<html><body><h1>SD-WAN v5 Management</h1><p>Read-only laboratory console. Authenticate with /api/v1/auth/login, then query /api/v1/system/health.</p></body></html>"
+    def ui(): return """<html><head><title>SD-WAN v5 Management</title><style>body{font-family:sans-serif;max-width:960px;margin:2rem auto}input,button{padding:.5rem;margin:.2rem}pre{padding:1rem;background:#111;color:#b8f7c2;overflow:auto}</style></head><body><h1>SD-WAN v5 Management</h1><p>Read-only laboratory dashboard. No fabric-control actions are available.</p><input id=u placeholder=username><input id=p type=password placeholder=password><button onclick=login()>Login</button><button onclick=load()>Load dashboard</button><pre id=o>Authenticate to load dashboard.</pre><script>let t='';async function login(){let r=await fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value,password:p.value})});let x=await r.json();t=x.access_token||'';o.textContent=t?'Authenticated as '+x.role:JSON.stringify(x)}async function load(){let r=await fetch('/api/v1/dashboard',{headers:{Authorization:'Bearer '+t}});o.textContent=JSON.stringify(await r.json(),null,2)}</script></body></html>"""
     install_mcp(app, service, principal)
     return app

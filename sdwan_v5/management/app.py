@@ -11,6 +11,7 @@ from .service import ManagementService
 from ..sdwan_mcp.app import install_mcp
 
 class Login(BaseModel): username: str; password: str
+class ChatRequest(BaseModel): prompt: str
 def create_app(config: ManagementConfig | None = None) -> FastAPI:
     config=config or ManagementConfig.from_env(); service=ManagementService(config); app=FastAPI(title="SD-WAN v5 Management", version="1.0.0")
     bearer = HTTPBearer(auto_error=False)
@@ -52,6 +53,13 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
     def events(user: Principal = Depends(require("read:events"))): return service.events()
     @app.get("/api/v1/audit")
     def audit(user: Principal = Depends(require("read:audit"))): return service.audit.list()
+    @app.post("/api/v1/chat/sessions")
+    def create_chat(user: Principal = Depends(require("chat:use"))):
+        return {"session_id":service.audit.create_session(user.subject)}
+    @app.get("/api/v1/chat/sessions/{session_id}")
+    def chat_messages(session_id: int,user: Principal = Depends(require("chat:use"))): return service.audit.messages(session_id)
+    @app.post("/api/v1/chat/sessions/{session_id}/messages")
+    def chat(session_id: int,value: ChatRequest,user: Principal = Depends(require("chat:use"))): return service.chat(user.subject,session_id,value.prompt)
     @app.get("/api/v1/events/stream")
     async def stream(user: Principal = Depends(require("read:events"))):
         async def generate():

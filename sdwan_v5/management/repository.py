@@ -25,8 +25,19 @@ class AuditStore:
         state_dir.mkdir(parents=True, exist_ok=True); self.path = state_dir / "management.db"
         with sqlite3.connect(str(self.path)) as db:
             db.execute("CREATE TABLE IF NOT EXISTS audit_events (id INTEGER PRIMARY KEY, created_at TEXT DEFAULT CURRENT_TIMESTAMP, actor TEXT, action TEXT, target TEXT, outcome TEXT, detail TEXT)")
+            db.execute("CREATE TABLE IF NOT EXISTS chat_sessions (id INTEGER PRIMARY KEY, actor TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+            db.execute("CREATE TABLE IF NOT EXISTS chat_messages (id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL, actor TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
     def add(self, actor: str, action: str, target: str, outcome: str, detail: str = "") -> None:
         with sqlite3.connect(str(self.path)) as db: db.execute("INSERT INTO audit_events(actor,action,target,outcome,detail) VALUES(?,?,?,?,?)", (actor,action,target,outcome,detail[:512]))
     def list(self) -> list[dict[str, Any]]:
         with sqlite3.connect(str(self.path)) as db:
             db.row_factory = sqlite3.Row; return [dict(row) for row in db.execute("SELECT * FROM audit_events ORDER BY id DESC LIMIT 200")]
+
+    def create_session(self, actor: str) -> int:
+        with sqlite3.connect(str(self.path)) as db:
+            return int(db.execute("INSERT INTO chat_sessions(actor) VALUES(?)",(actor,)).lastrowid)
+    def add_message(self, session: int, actor: str, content: str) -> None:
+        with sqlite3.connect(str(self.path)) as db: db.execute("INSERT INTO chat_messages(session_id,actor,content) VALUES(?,?,?)",(session,actor,content[:4000]))
+    def messages(self, session: int) -> list[dict[str, Any]]:
+        with sqlite3.connect(str(self.path)) as db:
+            db.row_factory=sqlite3.Row; return [dict(row) for row in db.execute("SELECT id,actor,content,created_at FROM chat_messages WHERE session_id=? ORDER BY id",(session,))]

@@ -32,3 +32,10 @@ class ManagementService:
         return {"site":site,"links":self.runtime.links(site),"tunnels":self.runtime.tunnels(site),"routes":self.runtime.routes(site),"rules":self.runtime.rules(site),"failover":self.runtime.failover(site),"classifier":self.runtime.classifier(site)}
     def dashboard(self) -> dict[str, Any]:
         return {"health":self.health(),"topology":self.topology_view(),"sites":self.sites(),"ownership":self.ownership(),"devices":self.ztp_devices()}
+
+    def chat(self, actor: str, session: int, prompt: str) -> dict[str, Any]:
+        self.audit.add_message(session, actor, prompt)
+        reply = "Read-only diagnosis: " + ("runtime adapter is available for configured nodes." if self.config.agent_command else "external Agent Gateway is disabled; use dashboard, site runtime, and events endpoints.")
+        self.audit.add_message(session, "management", reply)
+        self.audit.add(actor, "CHAT", str(session), "ok", "read-only summary")
+        return {"session_id":session,"reply":reply,"agent_gateway":"CONFIGURED_NOT_EXECUTED" if self.config.agent_command else "DISABLED","evidence":{"health":self.health(),"ownership":self.ownership()}}

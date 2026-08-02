@@ -13,8 +13,11 @@ from ..sdwan_mcp.app import install_mcp
 class Login(BaseModel): username: str; password: str
 def create_app(config: ManagementConfig | None = None) -> FastAPI:
     config=config or ManagementConfig.from_env(); service=ManagementService(config); app=FastAPI(title="SD-WAN v5 Management", version="1.0.0")
-    def principal(authorization: str = Header(default="")) -> Principal:
-        try: return verify(config.signing_secret, (authorization[7:] if authorization.startswith("Bearer ") else authorization))
+    bearer = HTTPBearer(auto_error=False)
+    def principal(credentials: HTTPAuthorizationCredentials = Depends(bearer)) -> Principal:
+        if credentials is None:
+            raise HTTPException(401, "authentication required")
+        try: return verify(config.signing_secret, credentials.credentials)
         except Exception: raise HTTPException(401, "authentication required")
     def require(scope: str):
         def check(user: Principal = Depends(principal)) -> Principal:

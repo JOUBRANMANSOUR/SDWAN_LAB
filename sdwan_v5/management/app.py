@@ -94,6 +94,14 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
     def hub_affinity(hub: str,user: Principal = Depends(require("network:read"))): return {"availability":"PARTIALLY_AVAILABLE","design":"connmark return-affinity; inspect runtime rules endpoint"}
     @app.get("/api/v1/hubs/{hub}")
     def hub(hub: str,user: Principal = Depends(require("network:read"))): return service.hub_view(hub)
+    @app.get("/api/v1/cloud-vpc/gateways")
+    def cloud_gateways(user: Principal = Depends(require("network:read"))): return [{"name":name,"availability":"CONFIGURED" if service.topology.cloud_vpc.enabled else "DISABLED"} for name in service.topology.cloud_vpc.gateway_names]
+    @app.get("/api/v1/cloud-vpc/gateways/{gateway}")
+    def cloud_gateway(gateway: str,user: Principal = Depends(require("network:read"))): return {"gateway":gateway,"runtime":service.runtime_view(gateway) if service.topology.cloud_vpc.enabled else {"availability":"DISABLED"}}
+    @app.get("/api/v1/cloud-vpc/gateways/{gateway}/routes")
+    def cloud_gateway_routes(gateway: str,user: Principal = Depends(require("network:read"))): return {"availability":"DISABLED" if not service.topology.cloud_vpc.enabled else "UNAVAILABLE","reason":"enable cloud topology for live runtime"}
+    @app.get("/api/v1/cloud-vpc/gateways/{gateway}/return-affinity")
+    def cloud_gateway_affinity(gateway: str,user: Principal = Depends(require("network:read"))): return {"availability":"PARTIALLY_AVAILABLE","design":"gateway connmark and scoped SNAT when Cloud VPC enabled"}
     @app.get("/api/v1/data-center/routes")
     def dc_routes(user: Principal = Depends(require("network:read"))): return {"availability":"UNAVAILABLE","reason":"no Data Center router runtime adapter"}
     @app.get("/api/v1/data-center/return-affinity")
@@ -131,6 +139,15 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
     def chat_messages(session_id: int,user: Principal = Depends(require("chat:use"))): return service.audit.messages(session_id)
     @app.post("/api/v1/chat/sessions/{session_id}/messages")
     def chat(session_id: int,value: ChatRequest,user: Principal = Depends(require("chat:use"))): return service.chat(user.subject,session_id,value.prompt)
+    @app.get("/api/v1/chat/sessions/{session_id}/events")
+    async def chat_events(session_id: int,user: Principal = Depends(require("chat:use"))):
+        async def generate():
+            for message in service.audit.messages(session_id): yield "event: assistant_delta\ndata: "+json.dumps(message)+"\n\n"
+        return StreamingResponse(generate(),media_type="text/event-stream")
+    @app.delete("/api/v1/chat/sessions/{session_id}")
+    def delete_chat(session_id: int,user: Principal = Depends(require("chat:use"))):
+        if not service.audit.delete_session(session_id,user.subject): raise HTTPException(404,"session not found")
+        return {"deleted":True}
     @app.get("/api/v1/events/stream")
     async def stream(user: Principal = Depends(require("network:read"))):
         async def generate():

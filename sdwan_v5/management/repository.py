@@ -41,3 +41,9 @@ class AuditStore:
     def messages(self, session: int) -> list[dict[str, Any]]:
         with sqlite3.connect(str(self.path)) as db:
             db.row_factory=sqlite3.Row; return [dict(row) for row in db.execute("SELECT id,actor,content,created_at FROM chat_messages WHERE session_id=? ORDER BY id",(session,))]
+
+    def delete_session(self, session: int, actor: str) -> bool:
+        with sqlite3.connect(str(self.path)) as db:
+            owner=db.execute("SELECT actor FROM chat_sessions WHERE id=?",(session,)).fetchone()
+            if owner is None or str(owner[0]) != actor: return False
+            db.execute("DELETE FROM chat_messages WHERE session_id=?",(session,)); db.execute("DELETE FROM chat_sessions WHERE id=?",(session,)); return True

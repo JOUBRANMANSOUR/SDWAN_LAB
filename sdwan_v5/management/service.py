@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import Any
 from ..common.model import load_config
+from ..topology_v5 import build_live_plan
 from .config import ManagementConfig
 from .repository import ReadOnlyState, AuditStore
 from .runtime import RuntimeAdapter
@@ -49,3 +50,11 @@ class ManagementService:
         if kind == "saas": return {"network":str(c.saas_network),"endpoint":str(c.saas_ip),"name":c.saas_app_name,"egress":"policy controlled direct internet or hub backhaul"}
         if kind == "cloud-vpc": return {"enabled":c.cloud_vpc.enabled,"network":str(c.cloud_vpc.network),"endpoint":str(c.cloud_vpc.app_ip),"gateways":list(c.cloud_vpc.active_gateways),"availability":"CONFIGURED" if c.cloud_vpc.enabled else "DISABLED"}
         return {"availability":"UNAVAILABLE", "reason":"unknown network view"}
+
+    def topology_nodes(self) -> list[dict[str, Any]]:
+        plan=build_live_plan(self.topology)
+        return ([{"name":item.name,"kind":"switch","openflow":item.openflow,"dpid":item.dpid} for item in plan.switches] + [{"name":item.name,"kind":"docker","role":item.role,"image":item.image} for item in plan.docker_nodes])
+    def topology_links(self) -> list[dict[str, Any]]:
+        return [{"node1":item.node1,"node2":item.node2,"interface1":item.intf1,"interface2":item.intf2,"address1":item.address1,"address2":item.address2,"transport":item.transport} for item in build_live_plan(self.topology).links]
+    def combined_events(self) -> list[dict[str, Any]]:
+        return self.events()+[{"source":"management","event":item} for item in self.audit.list()]

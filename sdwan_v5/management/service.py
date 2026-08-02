@@ -23,6 +23,12 @@ class ManagementService:
         return self.state.rows("policy", "SELECT prefix,spoke,preferred_hub,standby_hub,current_owner_hub,previous_owner_hub,owner_epoch,route_version,state,reason,updated_at,pending_reconciliation FROM route_ownership ORDER BY spoke")
     def desired(self, site: str) -> list[dict[str, Any]]:
         return self.state.rows("policy", "SELECT site,version,digest,route_version,ownership_epoch,created_at,delivery_status,applied_status,verification_status FROM desired_states WHERE site=? ORDER BY version DESC", (site,))
+    def policy_versions(self) -> list[dict[str, Any]]:
+        return self.state.rows("policy", "SELECT version,digest,created_at,created_by FROM policy_versions ORDER BY version DESC")
+    def destination_policy(self) -> list[dict[str, Any]]:
+        return self.state.rows("policy", "SELECT v.version,v.digest,v.created_at,v.created_by,a.activated_at,a.activated_by FROM destination_policy_activation a JOIN destination_policy_versions v ON v.version=a.version")
+    def desired_summary(self) -> list[dict[str, Any]]:
+        return self.state.rows("policy", "SELECT site,MAX(version) AS latest_version,MAX(route_version) AS latest_route_version,MAX(created_at) AS last_created FROM desired_states GROUP BY site ORDER BY site")
     def ztp_devices(self) -> list[dict[str, Any]]:
         return self.state.rows("ztp", "SELECT device_id,assigned_site,status,public_key_fingerprint,created_at,updated_at FROM devices ORDER BY assigned_site")
     def events(self) -> list[dict[str, Any]]:
@@ -32,7 +38,7 @@ class ManagementService:
         if site not in self.topology.site_names: return {"availability":"UNAVAILABLE", "reason":"unknown site"}
         return {"site":site,"links":self.runtime.links(site),"tunnels":self.runtime.tunnels(site),"routes":self.runtime.routes(site),"rules":self.runtime.rules(site),"failover":self.runtime.failover(site),"classifier":self.runtime.classifier(site)}
     def dashboard(self) -> dict[str, Any]:
-        return {"health":self.health(),"topology":self.topology_view(),"sites":self.sites(),"ownership":self.ownership(),"devices":self.ztp_devices()}
+        return {"health":self.health(),"topology":self.topology_view(),"sites":self.sites(),"desired":self.desired_summary(),"ownership":self.ownership(),"devices":self.ztp_devices(),"destination_policy":self.destination_policy()}
 
     def chat(self, actor: str, session: int, prompt: str) -> dict[str, Any]:
         self.audit.add_message(session, actor, prompt)

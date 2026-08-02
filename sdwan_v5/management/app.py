@@ -1,7 +1,8 @@
 """FastAPI read-only management REST API and minimal SSE/UI surface."""
 from __future__ import annotations
 import asyncio, json
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from .auth import Principal, allowed, issue, parse_users, scopes_for, verify

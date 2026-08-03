@@ -38,6 +38,10 @@ class AuditStore:
             return int(db.execute("INSERT INTO chat_sessions(actor) VALUES(?)",(actor,)).lastrowid)
     def add_message(self, session: int, actor: str, content: str) -> None:
         with sqlite3.connect(str(self.path)) as db: db.execute("INSERT INTO chat_messages(session_id,actor,content) VALUES(?,?,?)",(session,actor,content[:4000]))
+    def owns_session(self, session: int, actor: str) -> bool:
+        with sqlite3.connect(str(self.path)) as db:
+            row=db.execute("SELECT actor FROM chat_sessions WHERE id=?",(session,)).fetchone()
+            return row is not None and str(row[0]) == actor
     def messages(self, session: int) -> list[dict[str, Any]]:
         with sqlite3.connect(str(self.path)) as db:
             db.row_factory=sqlite3.Row; return [dict(row) for row in db.execute("SELECT id,actor,content,created_at FROM chat_messages WHERE session_id=? ORDER BY id",(session,))]

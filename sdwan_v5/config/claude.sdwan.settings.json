@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": ["mcp__sdwan__*"],
+    "deny": ["Bash", "Edit", "Write", "WebFetch", "WebSearch", "Agent"]
+  }
+}

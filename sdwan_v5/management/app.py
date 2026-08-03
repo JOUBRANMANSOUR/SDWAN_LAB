@@ -8,12 +8,15 @@ from pydantic import BaseModel
 from .auth import Principal, allowed, issue, parse_users, scopes_for, verify
 from .config import ManagementConfig
 from .service import ManagementService
-from ..sdwan_mcp.app import install_mcp
+from .agent import OllamaClaudeRunner
 
 class Login(BaseModel): username: str; password: str
-class ChatRequest(BaseModel): prompt: str
+class ChatRequest(BaseModel):
+    prompt: str = ""
+    message: str = ""
+    context: dict = {}
 def create_app(config: ManagementConfig | None = None) -> FastAPI:
-    config=config or ManagementConfig.from_env(); service=ManagementService(config); app=FastAPI(title="SD-WAN v5 Management", version="1.0.0")
+    config=config or ManagementConfig.from_env(); service=ManagementService(config); runner=OllamaClaudeRunner(config); app=FastAPI(title="SD-WAN v5 Management", version="1.0.0")
     @app.middleware("http")
     async def audit_request(request: Request, call_next):
         request_id = str(uuid.uuid4())
@@ -50,8 +53,9 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
     @app.get("/api/v1/system/config")
     def system_config(user: Principal = Depends(require("network:read"))): return {"topology_config":str(config.topology),"policy_db_configured":str(config.policy_db),"ztp_db_configured":str(config.ztp_db),"agent_gateway":"configured but fail-closed" if config.agent_command else "disabled"}
     @app.get("/api/v1/system/capabilities")
-    def capabilities(user: Principal = Depends(require("network:read"))): return {"read_only":True,"rest":True,"mcp":"/mcp","agent_gateway":bool(config.agent_command),"unsupported":["policy writes","ztp writes","routing writes","docker exec from browser"]}
+    def capabilities(user: Principal = Depends(require("network:read"))): return {"read_only":True,"rest":"available","mcp":"available: local stdio only; no HTTP endpoint","agent_gateway":"partially_available","unsupported":["policy writes","ztp writes","routing writes","docker exec from browser"]}
     @app.get("/api/v1/dashboard")
+    @app.get("/api/v1/dashboard/summary")
     def dashboard(user: Principal = Depends(require("network:read"))): return service.dashboard()
     @app.get("/api/v1/topology")
     def topology(user: Principal = Depends(require("network:read"))): return service.topology_view()
@@ -83,7 +87,12 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
     @app.get("/api/v1/sites/{site}/routes")
     def routes(site: str,user: Principal = Depends(require("network:read"))): return service.runtime_view(site).get("routes")
     @app.get("/api/v1/sites/{site}/rules")
+    @app.get("/api/v1/sites/{site}/routing-rules")
     def rules(site: str,user: Principal = Depends(require("network:read"))): return service.runtime_view(site).get("rules")
+    @app.get("/api/v1/sites/{site}/routing-tables")
+    def routing_tables(site: str,user: Principal = Depends(require("network:read"))): return service.runtime_view(site).get("routes")
+    @app.get("/api/v1/sites/{site}/return-affinity")
+    def site_affinity(site: str,user: Principal = Depends(require("network:read"))): return {"available":True,"configuration":"connmark-based return-path affinity; live evidence is included in routing rules"}
     @app.get("/api/v1/hubs")
     def hubs(user: Principal = Depends(require("network:read"))): return [service.hub_view(name) for name in service.topology.hubs]
     @app.get("/api/v1/hubs/{hub}/tunnels")
@@ -131,21 +140,38 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
     @app.get("/api/v1/events")
     def events(user: Principal = Depends(require("network:read"))): return service.events()
     @app.get("/api/v1/audit")
+    @app.get("/api/v1/audit/events")
     def audit(user: Principal = Depends(require("audit:read"))): return service.audit.list()
     @app.post("/api/v1/chat/sessions")
-    def create_chat(user: Principal = Depends(require("chat:use"))):
-        return {"session_id":service.audit.create_session(user.subject)}
+    def create_chat(user: Principal = Depends(require("network:read"))):
+        return {"session_id":service.audit.create_session(user.subject),"status":"created"}
     @app.get("/api/v1/chat/sessions/{session_id}")
-    def chat_messages(session_id: int,user: Principal = Depends(require("chat:use"))): return service.audit.messages(session_id)
+    def chat_messages(session_id: int,user: Principal = Depends(require("network:read"))):
+        if not service.audit.owns_session(session_id,user.subject): raise HTTPException(404,"session not found")
+        return service.audit.messages(session_id)
     @app.post("/api/v1/chat/sessions/{session_id}/messages")
-    def chat(session_id: int,value: ChatRequest,user: Principal = Depends(require("chat:use"))): return service.chat(user.subject,session_id,value.prompt)
+    async def chat(session_id: int,value: ChatRequest,user: Principal = Depends(require("network:read"))):
+        if not service.audit.owns_session(session_id,user.subject): raise HTTPException(404,"session not found")
+        prompt=(value.message or value.prompt).strip()
+        if not prompt or len(prompt)>4000: raise HTTPException(422,"message must be 1..4000 characters")
+        service.audit.add_message(session_id,user.subject,prompt); events=[]; text=[]
+        async for event in runner.run(prompt,str(session_id),user):
+            events.append({"type":event.type,"data":event.data})
+            if event.type=="assistant_delta": text.append(str(event.data.get("text","")))
+        reply="".join(text) or "The read-only agent did not return a response. Consult the REST evidence endpoints."
+        service.audit.add_message(session_id,"management",reply); service.audit.add(user.subject,"CHAT",str(session_id),"completed","read-only Ollama Claude gateway")
+        return {"session_id":session_id,"accepted":True,"reply":reply,"events":events}
     @app.get("/api/v1/chat/sessions/{session_id}/events")
-    async def chat_events(session_id: int,user: Principal = Depends(require("chat:use"))):
+    async def chat_events(session_id: int,user: Principal = Depends(require("network:read"))):
+        if not service.audit.owns_session(session_id,user.subject): raise HTTPException(404,"session not found")
         async def generate():
-            for message in service.audit.messages(session_id): yield "event: assistant_delta\ndata: "+json.dumps(message)+"\n\n"
+            yield "event: session_started\ndata: "+json.dumps({"session_id":session_id})+"\n\n"
+            for message in service.audit.messages(session_id):
+                yield "event: assistant_delta\ndata: "+json.dumps({"text":message["content"][:8192]})+"\n\n"
+            yield "event: heartbeat\ndata: {}\n\n"
         return StreamingResponse(generate(),media_type="text/event-stream")
     @app.delete("/api/v1/chat/sessions/{session_id}")
-    def delete_chat(session_id: int,user: Principal = Depends(require("chat:use"))):
+    def delete_chat(session_id: int,user: Principal = Depends(require("network:read"))):
         if not service.audit.delete_session(session_id,user.subject): raise HTTPException(404,"session not found")
         return {"deleted":True}
     @app.get("/api/v1/events/stream")
@@ -160,5 +186,4 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
         return StreamingResponse(generate(),media_type="text/event-stream")
     @app.get("/", response_class=HTMLResponse)
     def ui(): return """<!doctype html><html><head><title>SD-WAN v5 Management</title><style>body{font-family:system-ui;background:#f3f6fa;color:#172033;max-width:1180px;margin:2rem auto;padding:0 1rem}.panel{background:white;border-radius:12px;padding:1rem;margin:1rem 0;box-shadow:0 1px 5px #ccd}input,button{padding:.6rem;margin:.2rem;border:1px solid #aab;border-radius:6px}button{background:#155eef;color:white}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem}.card{background:#eef4ff;padding:1rem;border-radius:8px}pre{padding:1rem;background:#101828;color:#d0f8d0;overflow:auto;max-height:480px}.warn{color:#9a4d00}</style></head><body><h1>SD-WAN v5 Management</h1><p class=warn>Read-only laboratory observability. No topology, Policy, ZTP, route, tunnel, Docker, or shell control is exposed.</p><div class=panel><input id=u placeholder=username><input id=p type=password placeholder=password><button onclick=login()>Login</button><button onclick=load()>Refresh dashboard</button></div><div id=cards class=grid></div><div class=panel><h2>Read-only assisted diagnosis</h2><input id=q placeholder='Ask for a status summary' size=42><button onclick=chat()>Ask</button><pre id=o>Authenticate, then refresh dashboard.</pre></div><script>let t='',sid=0;const o=document.getElementById('o');const hdr=()=>({Authorization:'Bearer '+t,'Content-Type':'application/json'});function card(k,v){return '<div class=card><b>'+k+'</b><br>'+v+'</div>'}async function login(){let r=await fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value,password:p.value})});let x=await r.json();t=x.access_token||'';o.textContent=t?'Authenticated as '+x.role:JSON.stringify(x)}async function load(){let r=await fetch('/api/v1/dashboard',{headers:hdr()});let x=await r.json();if(!r.ok){o.textContent=JSON.stringify(x,null,2);return}cards.innerHTML=card('Sites',x.sites.length)+card('Route ownership',x.ownership.length)+card('Devices',x.devices.length)+card('Policy DB',x.health.sources.policy_db)+card('ZTP DB',x.health.sources.ztp_db);o.textContent=JSON.stringify(x,null,2)}async function chat(){if(!sid){let r=await fetch('/api/v1/chat/sessions',{method:'POST',headers:hdr()});sid=(await r.json()).session_id}let r=await fetch('/api/v1/chat/sessions/'+sid+'/messages',{method:'POST',headers:hdr(),body:JSON.stringify({prompt:q.value})});o.textContent=JSON.stringify(await r.json(),null,2)}</script></body></html>"""
-    install_mcp(app, service, principal)
     return app

@@ -20,15 +20,20 @@ class ManagementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             client=self.app(directory); headers={'Authorization':'Bearer '+self.token(client,'admin')}
             session=client.post('/api/v1/chat/sessions',headers=headers).json()['session_id']
-            response=client.post('/api/v1/chat/sessions/%s/messages'%session,headers=headers,json={'prompt':'status'})
-            self.assertEqual(response.status_code,200); self.assertEqual(response.json()['agent_gateway'],'UNAVAILABLE')
+            from unittest.mock import patch
+            async def fake_run(*args, **kwargs):
+                from sdwan_v5.management.agent import AgentEvent
+                yield AgentEvent('assistant_delta', {'text':'read-only status'})
+                yield AgentEvent('agent_completed', {})
+            with patch('sdwan_v5.management.app.OllamaClaudeRunner.run', fake_run):
+                response=client.post('/api/v1/chat/sessions/%s/messages'%session,headers=headers,json={'message':'status'})
+            self.assertEqual(response.status_code,200); self.assertTrue(response.json()['accepted'])
             self.assertEqual(len(client.get('/api/v1/chat/sessions/%s'%session,headers=headers).json()),2)
             self.assertTrue(client.get('/api/v1/audit',headers=headers).json())
-    def test_mcp_requires_token_and_mcp_scope(self):
+    def test_no_http_mcp_endpoint_and_session_ownership(self):
         with tempfile.TemporaryDirectory() as directory:
-            client=self.app(directory)
-            self.assertEqual(client.post('/mcp',json={'method':'initialize','id':1}).status_code,401)
-            token=self.token(client,'viewer'); headers={'Authorization':'Bearer '+token}
-            response=client.post('/mcp',headers=headers,json={'method':'tools/list','id':1})
-            self.assertEqual(response.status_code,200)
-            self.assertIn('tools',response.json()['result'])
+            client=self.app(directory); viewer={'Authorization':'Bearer '+self.token(client,'viewer')}; admin={'Authorization':'Bearer '+self.token(client,'admin')}
+            self.assertEqual(client.post('/mcp',json={'method':'initialize','id':1}).status_code,404)
+            session=client.post('/api/v1/chat/sessions',headers=viewer).json()['session_id']
+            self.assertEqual(client.get('/api/v1/chat/sessions/%s'%session,headers=admin).status_code,404)
+            self.assertEqual(client.get('/api/v1/dashboard/summary',headers=viewer).status_code,200)

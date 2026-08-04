@@ -53,7 +53,7 @@ class OllamaClaudeRunner:
                           "Use site_status for configured site listings and site status. Never use invented claim types such as observed, configured, or derived. "
                           "For operational or mixed answers, every claim must reference fact_ids returned by MCP in this message. Do not put operational values in summary or explanation; FastAPI renders values from evidence. "
                           "For conceptual answers, claims must be empty. Never suggest or perform configuration changes. "
-                          "Available MCP capabilities: list_sites and get_site_status for configured sites; get_site_tunnels for WireGuard status; get_site_routes for installed route data; explain_route_decision for a specific destination (it requires site and destination); compare_desired_actual for state comparison; get_recent_events for audit evidence. "
+                          "Available MCP capabilities: list_sites and get_site_status for configured site records (including LAN prefixes and hub assignments); get_site_tunnels for WireGuard status; get_site_routes for installed route data; explain_route_decision for a specific destination (it requires site and destination); compare_desired_actual for state comparison; get_recent_events for audit evidence. "
                           "For a question requesting a site route table without a destination, call get_site_routes. Do not claim a tool is unavailable before attempting the relevant approved tool.\n\nUser question: " + prompt)
         resume = False
         cmd=command_for(self.config, factual_prompt, claude_session_id, resume=resume); env=restricted_environment(self.config, token, session_id, message_id, bundle_id)

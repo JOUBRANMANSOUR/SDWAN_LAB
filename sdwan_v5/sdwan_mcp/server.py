@@ -75,10 +75,10 @@ def build_server(config: ManagementConfig, principal: Principal) -> FastMCP:
         _require(principal, "network:read")
         return _tool_result(service, principal, "list_sites", {"sites": service.sites()}, "database", StateKind.configured)
 
-    @mcp.tool(description="Return configured, desired, and runtime views for one configured site. Use for a broad current-status query. Do not use it to enumerate routes or tunnels in detail; use get_site_routes or get_site_tunnels. Runtime fields can be unavailable and are not inferred.")
+    @mcp.tool(description="Return the compact configured record for one site: LAN prefix, preferred hub, standby hub, and configured status. Use for questions about a site's configured identity or LAN prefix. Do not use it for routes or tunnels; use get_site_routes or get_site_tunnels for those live details. Takes one configured site identifier.")
     def get_site_status(site: Annotated[str, Field(min_length=1, max_length=64, description="Configured site identifier, for example node1")]) -> OperationalResult:
         _require(principal, "network:read"); _site(service, site)
-        return _tool_result(service, principal, "get_site_status", service.runtime_view(site), "runtime_command", StateKind.observed)
+        return _tool_result(service, principal, "get_site_status", service.site_status(site), "database", StateKind.configured)
 
     @mcp.tool(description="Return observed WireGuard text status for one configured site through the constrained runtime adapter. Use only for current tunnel inspection. Do not use it for routing-table decisions or to expose private keys. If Docker or the namespace is unavailable, metadata reports unavailable rather than inventing tunnel state.")
     def get_site_tunnels(site: Annotated[str, Field(min_length=1, max_length=64, description="Configured site identifier")]) -> OperationalResult:

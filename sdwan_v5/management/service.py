@@ -34,6 +34,14 @@ class ManagementService:
     def events(self) -> list[dict[str, Any]]:
         return self.state.rows("policy", "SELECT actor,action,target,reason,result,before_version,after_version,created_at FROM policy_audit_events ORDER BY id DESC LIMIT 200")
 
+    def site_status(self, site: str) -> dict[str, Any]:
+        """Return compact configured status evidence; runtime detail has dedicated tools."""
+        record=next((row for row in self.sites() if row.get("site") == site), None)
+        if record is None:
+            configured=self.topology.sites[site]
+            record={"site":site,"lan_prefix":str(configured.lan_network),"preferred_hub":configured.preferred_hub,"standby_hub":configured.standby_hub,"status":"CONFIGURED"}
+        return {key:record.get(key) for key in ("site","lan_prefix","preferred_hub","standby_hub","status","updated_at") if record.get(key) is not None}
+
     def runtime_view(self, site: str) -> dict[str, Any]:
         if site not in self.topology.site_names: return {"availability":"UNAVAILABLE", "reason":"unknown site"}
         return {"site":site,"links":self.runtime.links(site),"tunnels":self.runtime.tunnels(site),"routes":self.runtime.routes(site),"rules":self.runtime.rules(site),"failover":self.runtime.failover(site),"classifier":self.runtime.classifier(site)}

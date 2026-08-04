@@ -57,6 +57,17 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(report['derived']['hub'], 'hub1')
         self.assertIn('connection_mark', [item['field'] for item in report['unknowns']])
 
+    def test_site_status_is_compact_configured_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = ManagementConfig(ROOT/'config/topology.yaml', Path(directory)/'policy.db', Path(directory)/'ztp.db', Path(directory), 'test-secret', '', '')
+            service = ManagementService(config)
+            status = service.site_status('node1')
+        self.assertEqual(status['site'], 'node1')
+        self.assertEqual(status['lan_prefix'], '10.1.0.0/24')
+        self.assertEqual(status['preferred_hub'], 'hub1')
+        self.assertNotIn('routes', status)
+        self.assertNotIn('tunnels', status)
+
     def test_no_http_mcp_endpoint_and_session_ownership(self):
         with tempfile.TemporaryDirectory() as directory:
             client=self.app(directory); viewer={'Authorization':'Bearer '+self.token(client,'viewer')}; admin={'Authorization':'Bearer '+self.token(client,'admin')}

@@ -14,7 +14,7 @@ class EvidenceValidator:
         facts={str(item.get("fact_id")):item for item in bundle["payload"].get("facts",[]) if item.get("fact_id")}
         errors=[]; accepted=[]
         compatible = {
-            "site_status": {"sites", "site", "configured", "desired", "runtime", "links", "tunnels", "routes", "rules", "failover", "classifier"},
+            "site_status": {"sites", "site", "lan_prefix", "preferred_hub", "standby_hub", "status", "configured", "desired", "runtime", "links", "tunnels", "routes", "rules", "failover", "classifier"},
             "tunnel_status": {"tunnels"}, "routing_rule": {"routing_rules", "matched_rule"},
             "routing_table": {"selected_routing_table", "route_groups"}, "route": {"matched_route", "routes", "route_groups"},
             "next_hop": {"next_hop", "matched_route"}, "output_interface": {"output_interface", "matched_route", "route_groups"},

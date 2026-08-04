@@ -71,68 +71,73 @@ class ManagementService:
                     policy_rules.append({key:rule.get(key) for key in ("priority","fwmark","fwmask","table","src","dst") if rule.get(key) is not None})
         return {"available":True,"site":site,"route_groups":route_groups,"routing_rules":policy_rules[:128],"return_affinity":{"configuration":"connmark-based; routes are selected by persistent connection mark and policy rule","evidence":"inspect the listed fwmark policy rules and selected WireGuard output interface"}}
 
-    def route_decision_report(self, site: str) -> dict[str, Any]:
-        """Render a deterministic, evidence-only route-decision report.
+    def compare_desired_actual(self, site: str) -> dict[str, Any]:
+        """Compare only fields with compatible semantics; never ask the model to infer it."""
+        if site not in self.topology.site_names:
+            return {"available": False, "reason": "unknown site"}
+        desired_rows = self.desired(site)
+        runtime = self.runtime_view(site)
+        latest = desired_rows[0] if desired_rows else None
+        comparisons = []
+        comparisons.append({"field": "desired_state_record", "desired_value": bool(latest), "observed_value": None, "comparison_status": "desired_only" if latest else "unavailable", "reason": "desired-state records and runtime namespace values are not the same semantic field"})
+        runtime_available = all(isinstance(runtime.get(name), dict) and runtime[name].get("availability") == "AVAILABLE" for name in ("links", "routes", "rules", "tunnels") if name in runtime)
+        comparisons.append({"field": "runtime_adapter", "desired_value": None, "observed_value": "AVAILABLE" if runtime_available else "UNAVAILABLE", "comparison_status": "observed_only", "reason": "runtime availability is observed independently of desired state"})
+        return {"available": True, "site": site, "comparisons": comparisons, "desired_record": latest, "runtime_available": runtime_available,
+                "limitations": ["No field is labeled match or mismatch unless desired and observed values have identical semantics."]}
 
-        This is deliberately rendered here rather than delegated to an LLM.  The
-        report describes installed policy rules and route groups; it does not
-        claim which route an unobserved packet will select.
-        """
-        summary = self.route_summary(site)
-        if not summary.get("available"):
-            return {"available": False, "site": site, "reason": summary.get("reason", "routes unavailable")}
-
-        rules = summary.get("routing_rules", [])
-        groups = summary.get("route_groups", [])
-        lines = ["## Verified route-decision evidence for `{}`".format(site), "", "### Installed policy rules"]
-        if rules:
-            for rule in rules:
-                priority = rule.get("priority", "not reported")
-                mark = rule.get("fwmark", "not reported")
-                mask = rule.get("fwmask")
-                table = rule.get("table", "not reported")
-                match = str(mark) + ("/" + str(mask) if mask is not None else "")
-                lines.append("- Priority `{}`: packets matching fwmark `{}` select table `{}`.".format(priority, match, table))
-        else:
-            lines.append("- No fwmark policy rules were reported.")
-
-        lines.extend(["", "### Installed route groups"])
-        if groups:
-            for group in groups:
-                table = group.get("table", "not reported")
-                interface = group.get("output_interface", "not reported")
-                destinations = group.get("destinations", [])
-                count = len(destinations) if isinstance(destinations, list) else 0
-                rendered_destinations = ", ".join(str(item) for item in destinations[:8]) if isinstance(destinations, list) else ""
-                if count > 8:
-                    rendered_destinations += ", …"
-                details = ["table `{}`".format(table), "interface `{}`".format(interface), "{} destination(s)".format(count)]
-                if group.get("next_hop") is not None:
-                    details.append("next hop `{}`".format(group["next_hop"]))
-                lines.append("- {}. Destinations: {}.".format(
-                    "; ".join(details), rendered_destinations or "not reported"))
-        else:
-            lines.append("- No relevant overlay or direct-egress route groups were reported.")
-
-        lines.extend([
-            "", "### Evidence boundary",
-            "- The installed rules show how an observed fwmark maps to a routing table.",
-            "- The installed route groups show destinations available in each reported table.",
-            "- These data do not identify the fwmark of a specific unobserved packet; therefore they do not by themselves prove the route selected for that packet.",
-            "- Return affinity is configured as connmark-based according to the runtime evidence.",
-        ])
-        report = "\n".join(lines)
-        return {
-            "available": True,
-            "site": site,
-            "operator_report": report,
-            "facts": {"routing_rules": rules, "route_groups": groups, "return_affinity": summary.get("return_affinity")},
-            "interpretation_constraints": [
-                "Describe only policy-rule-to-table mappings and reported route groups.",
-                "For a particular packet, require its observed fwmark before stating a selected table or interface.",
-                "Do not assign a route type, lifetime, intent, or traffic class unless that field is present in facts.",
-            ],
-        }
+    def route_decision_report(self, site: str, destination: str, source: str | None = None, fwmark: int | None = None) -> dict[str, Any]:
+        """Perform a destination-aware read-only lookup without inventing fields."""
+        import ipaddress
+        if site not in self.topology.site_names:
+            return {"available": False, "reason": "unknown site"}
+        try:
+            ipaddress.ip_address(destination)
+            if source is not None:
+                ipaddress.ip_address(source)
+        except ValueError:
+            return {"available": False, "reason": "invalid destination or source"}
+        lookup = self.runtime.route_lookup(site, destination, source, fwmark)
+        rules = self.runtime.rules(site)
+        if lookup.get("availability") != "AVAILABLE":
+            return {"available": False, "reason": lookup.get("reason", "runtime route lookup unavailable")}
+        values = lookup.get("value", [])
+        selected = values[0] if isinstance(values, list) and values else {}
+        matched_rule = None
+        if fwmark is not None and rules.get("availability") == "AVAILABLE":
+            for rule in rules.get("value", []):
+                try:
+                    mark = int(str(rule.get("fwmark", "-1")), 0)
+                    mask = int(str(rule.get("fwmask", "0xffffffff")), 0)
+                    if fwmark & mask == mark & mask:
+                        candidate = {"priority": rule.get("priority"), "table": rule.get("table"), "fwmark": rule.get("fwmark"), "fwmask": rule.get("fwmask")}
+                        if matched_rule is None or int(candidate["priority"] or 2**31) < int(matched_rule["priority"] or 2**31):
+                            matched_rule = candidate
+                except (TypeError, ValueError):
+                    continue
+        dev = selected.get("dev")
+        derived = {"hub": None, "transport": None}
+        if isinstance(dev, str) and dev.startswith("wg-"):
+            parts = dev.split("-")
+            if len(parts) >= 3 and parts[1].startswith("h"):
+                derived["hub"] = "hub" + parts[1][1:]
+                derived["transport"] = parts[2]
+        unknowns = []
+        if fwmark is None:
+            unknowns.append({"field": "matched_rule", "reason": "no packet fwmark was supplied"})
+        if not selected:
+            unknowns.append({"field": "matched_route", "reason": "runtime lookup returned no route record"})
+        for field, value in (("selected_routing_table", selected.get("table")), ("next_hop", selected.get("gateway")), ("output_interface", dev), ("connection_mark", None)):
+            if value is None:
+                unknowns.append({"field": field, "reason": "not reported by the current routing adapter"})
+        return {"available": True, "site": site, "destination": destination, "source": source, "packet_mark": fwmark,
+                "matched_rule": matched_rule, "selected_routing_table": selected.get("table"),
+                "matched_route": {key: selected.get(key) for key in ("dst", "gateway", "dev", "prefsrc", "type") if selected.get(key) is not None} or None,
+                "next_hop": selected.get("gateway"), "output_interface": dev,
+                "connection_mark": None, "derived": derived,
+                "state_kind": {"packet_mark": "observed" if fwmark is not None else "unavailable", "matched_rule": "derived" if matched_rule else "unavailable", "matched_route": "observed" if selected else "unavailable", "hub": "derived" if derived["hub"] else "unavailable", "transport": "derived" if derived["transport"] else "unavailable"},
+                "unknowns": unknowns,
+                "limitations": ["The route lookup reflects the supplied destination, optional source, and optional fwmark only.", "A connection mark is not exposed by the current routing adapter."],
+                "warnings": []}
 
     def hub_view(self, hub: str) -> dict[str, Any]:
         if hub not in self.topology.hubs: return {"availability":"UNAVAILABLE", "reason":"unknown hub"}

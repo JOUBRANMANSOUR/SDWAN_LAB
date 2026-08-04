@@ -12,13 +12,13 @@ class AgentEvent:
 def command_for(config: ManagementConfig, prompt: str, session_id: str, resume: bool = False) -> List[str]:
     session_option = ["--resume", session_id] if resume else ["--session-id", session_id]
     return [config.ollama_executable, "launch", "claude", "--model", config.ollama_model, "--yes", "--", "-p", prompt, "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--mcp-config", str(config.mcp_config), "--strict-mcp-config", "--settings", str(config.claude_settings)] + session_option
-def restricted_environment(config: ManagementConfig, context_token: str, session_id: str) -> Dict[str, str]:
-    return {"HOME": config.claude_home, "PATH": config.agent_path, "SDWAN_PROJECT_ROOT": str(config.project_root), "PYTHONPATH": str(config.project_root.parent), "SDWAN_AGENT_CONTEXT_TOKEN": context_token, "SDWAN_CHAT_SESSION_ID": session_id, "SDWAN_MANAGEMENT_SECRET": config.signing_secret, "SDWAN_AGENT_CONTEXT_AUDIENCE": config.agent_context_audience}
+def restricted_environment(config: ManagementConfig, context_token: str, session_id: str, message_id: str, bundle_id: str) -> Dict[str, str]:
+    return {"HOME": config.claude_home, "PATH": config.agent_path, "SDWAN_PROJECT_ROOT": str(config.project_root), "PYTHONPATH": str(config.project_root.parent), "SDWAN_AGENT_CONTEXT_TOKEN": context_token, "SDWAN_CHAT_SESSION_ID": session_id, "SDWAN_CHAT_MESSAGE_ID": message_id, "SDWAN_EVIDENCE_BUNDLE_ID": bundle_id, "SDWAN_MANAGEMENT_SECRET": config.signing_secret, "SDWAN_AGENT_CONTEXT_AUDIENCE": config.agent_context_audience}
 def normalized_event(raw: Dict[str, object]) -> AgentEvent:
     """Expose only text deltas and safe MCP activity; never reasoning events."""
     kind = str(raw.get("type", ""))
     if kind == "result":
-        return AgentEvent("agent_completed", {"session_id": str(raw.get("session_id", ""))})
+        return AgentEvent("ignore", {})
     if kind != "stream_event":
         return AgentEvent("ignore", {})
     event = raw.get("event", {})
@@ -42,17 +42,17 @@ class OllamaClaudeRunner:
     def __init__(self, config: ManagementConfig):
         self.config=config
         self._started_sessions = set()
-    async def run(self, prompt: str, session_id: str, principal: Principal) -> AsyncIterator[AgentEvent]:
+    async def run(self, prompt: str, session_id: str, principal: Principal, message_id: str = "", bundle_id: str = "") -> AsyncIterator[AgentEvent]:
         token=issue_agent_context(self.config.signing_secret, principal, session_id, self.config.agent_context_audience, self.config.agent_context_ttl_seconds)
         claude_session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "sdwan-v5-web-session:" + session_id))
-        factual_prompt = ("You are a read-only SD-WAN diagnostic assistant. Use only approved SD-WAN MCP tools for current facts. "
-                          "Do not infer, invent, rename, or generalize facts beyond returned fields. Do not describe an absent field as main, kernel, static, DNS, SIMPL, or any other route type. "
-                          "For empty or null values say 'not reported'. State unavailable when evidence is absent. "
-                          "Unless the user explicitly asks for raw JSON, answer in concise natural language with compact Markdown tables; summarize route groups instead of listing every repeated destination. Do not mention route protocol unless the user explicitly asks for it. "
-                          "When a tool returns an operator_report, reproduce that report verbatim under the heading Verified report. You may add a short explanation only of its explicit facts and interpretation_constraints; do not add an operational interpretation of your own. "
-                          "Never suggest or perform configuration changes.\n\nUser question: " + prompt)
+        factual_prompt = ("You are a read-only SD-WAN diagnostic assistant. Use approved SD-WAN MCP tools for every current-lab claim. "
+                          "For a current operational or mixed question, call at least one relevant MCP tool. Never invent facts, values, route types, selected paths, or unavailable fields. "
+                          "Your final response MUST be one JSON object matching this schema: {answer_type: conceptual|operational|mixed, summary: string, claims: [{claim_id:string, claim_type:site_status|tunnel_status|routing_rule|routing_table|route|next_hop|output_interface|selected_hub|selected_transport|state_comparison|event|limitation, fact_ids:[string], explanation:string|null}], unknowns:[string], limitations:[string]}. "
+                          "Use site_status for configured site listings and site status. Never use invented claim types such as observed, configured, or derived. "
+                          "For operational or mixed answers, every claim must reference fact_ids returned by MCP in this message. Do not put operational values in summary or explanation; FastAPI renders values from evidence. "
+                          "For conceptual answers, claims must be empty. Never suggest or perform configuration changes.\n\nUser question: " + prompt)
         resume = claude_session_id in self._started_sessions
-        cmd=command_for(self.config, factual_prompt, claude_session_id, resume=resume); env=restricted_environment(self.config, token, session_id)
+        cmd=command_for(self.config, factual_prompt, claude_session_id, resume=resume); env=restricted_environment(self.config, token, session_id, message_id, bundle_id)
         if not self.config.mcp_config.is_file() or not self.config.claude_settings.is_file():
             yield AgentEvent("agent_error", {"reason":"agent configuration is unavailable"}); return
         try:
@@ -82,7 +82,8 @@ class OllamaClaudeRunner:
             if len(stderr) > self.config.claude_max_output_bytes or code != 0: yield AgentEvent("agent_error", {"reason":"agent process did not complete successfully", "exit_code":code})
             else:
                 self._started_sessions.add(claude_session_id)
-                if final_text and not saw_text: yield AgentEvent("assistant_delta", {"text":final_text[:8192]})
+                if final_text:
+                    yield AgentEvent("agent_final", {"text":final_text[:16384]})
                 yield AgentEvent("agent_completed", {"session_id":session_id})
         except (asyncio.TimeoutError, RuntimeError):
             proc.terminate()

@@ -21,6 +21,13 @@ class RuntimeAdapter:
     def tunnels(self,node: str): return self._run(node,["wg","show"])
     def routes(self,node: str): return self.json(node,["ip","-j","route","show","table","all"])
     def rules(self,node: str): return self.json(node,["ip","-j","rule","show"])
+    def route_lookup(self, node: str, destination: str, source: str | None = None, fwmark: int | None = None) -> dict[str, Any]:
+        command = ["ip", "-j", "route", "get", destination]
+        if source is not None:
+            command.extend(["from", source])
+        if fwmark is not None:
+            command.extend(["mark", str(fwmark)])
+        return self.json(node, command)
     def links(self,node: str): return self.json(node,["ip","-j","link","show"])
     def failover(self,node: str): return self._run(node,["cat","/var/lib/sdwan/state/failover-status.json"])
     def classifier(self,node: str): return self._run(node,["tail","-n","50","/var/lib/sdwan/state/classifier-events.jsonl"])

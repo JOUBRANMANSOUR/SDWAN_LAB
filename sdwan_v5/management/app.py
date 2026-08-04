@@ -10,6 +10,7 @@ from .auth import Principal, allowed, issue, parse_users, scopes_for, verify
 from .config import ManagementConfig
 from .service import ManagementService
 from .agent import OllamaClaudeRunner
+from .evidence import EvidenceValidator, render_verified_answer
 
 class Login(BaseModel): username: str; password: str
 class ChatRequest(BaseModel):
@@ -17,7 +18,7 @@ class ChatRequest(BaseModel):
     message: str = ""
     context: dict = {}
 def create_app(config: ManagementConfig | None = None) -> FastAPI:
-    config=config or ManagementConfig.from_env(); service=ManagementService(config); runner=OllamaClaudeRunner(config); app=FastAPI(title="SD-WAN v5 Management", version="1.0.0")
+    config=config or ManagementConfig.from_env(); service=ManagementService(config); runner=OllamaClaudeRunner(config); validator=EvidenceValidator(); app=FastAPI(title="SD-WAN v5 Management", version="1.0.0")
     event_queues: Dict[int, asyncio.Queue] = {}
     active_chat_tasks: Dict[int, asyncio.Task] = {}
     @app.middleware("http")
@@ -161,21 +162,47 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
         if session_id in active_chat_tasks and not active_chat_tasks[session_id].done(): raise HTTPException(409,"a message is already running for this session")
         prompt=(value.message or value.prompt).strip()
         if not prompt or len(prompt)>4000: raise HTTPException(422,"message must be 1..4000 characters")
-        queue = event_queue(session_id); service.audit.add_message(session_id,user.subject,prompt)
+        queue = event_queue(session_id)
+        message_id = service.audit.add_message(session_id,user.subject,prompt)
+        bundle_id = uuid.uuid4().hex
+        service.audit.create_evidence_bundle(bundle_id, session_id, message_id, user.subject)
         async def execute():
-            text=[]; await queue.put({"type":"session_started","data":{"session_id":session_id}})
+            final_text=""; await queue.put({"type":"session_started","data":{"session_id":session_id,"message_id":message_id}})
+            await queue.put({"type":"evidence_bundle_created","data":{"bundle_id":bundle_id,"message_id":message_id}})
+            await queue.put({"type":"agent_starting","data":{}})
             try:
-                async for event in runner.run(prompt,str(session_id),user):
+                async for event in runner.run(prompt,str(session_id),user,str(message_id),bundle_id):
                     await queue.put({"type":event.type,"data":event.data})
-                    if event.type=="assistant_delta": text.append(str(event.data.get("text","")))
-                reply="".join(text) or "The read-only agent did not return a response. Consult the REST evidence endpoints."
-                service.audit.add_message(session_id,"management",reply); service.audit.add(user.subject,"CHAT",str(session_id),"completed","read-only Ollama Claude gateway")
+                    if event.type=="agent_final": final_text=str(event.data.get("text",""))
+                await queue.put({"type":"answer_validation_started","data":{"bundle_id":bundle_id}})
+                bundle=service.audit.evidence_bundle(bundle_id,session_id,user.subject)
+                try:
+                    candidate=final_text.strip()
+                    if candidate.startswith("```"):
+                        candidate=candidate.split("\n",1)[-1].rsplit("```",1)[0].strip()
+                    parsed=json.loads(candidate)
+                except (TypeError, ValueError):
+                    parsed={"answer_type":"operational","summary":"","claims":[],"unknowns":[],"limitations":[]}
+                outcome=validator.validate(parsed,bundle or {"payload":{}})
+                service.audit.finalize_evidence_bundle(bundle_id,session_id,user.subject,outcome)
+                if outcome.get("valid") and bundle:
+                    rendered=render_verified_answer(outcome,bundle)
+                    service.audit.add_message(session_id,"management",rendered)
+                    await queue.put({"type":"answer_validation_completed","data":{"bundle_id":bundle_id,"validated_claims":outcome.get("validated_claims",[])}})
+                    await queue.put({"type":"verified_answer","data":{"bundle_id":bundle_id,"markdown":rendered}})
+                    service.audit.add(user.subject,"CHAT",str(session_id),"verified","evidence-bound response")
+                else:
+                    fallback="The current evidence is insufficient to provide a verified operational answer."
+                    service.audit.add_message(session_id,"management",fallback)
+                    await queue.put({"type":"answer_validation_failed","data":{"bundle_id":bundle_id,"errors":outcome.get("errors",[])}})
+                    await queue.put({"type":"verified_answer","data":{"bundle_id":bundle_id,"markdown":fallback}})
+                    service.audit.add(user.subject,"CHAT",str(session_id),"unavailable","evidence validation failed")
             except Exception:
                 await queue.put({"type":"agent_error","data":{"reason":"agent gateway failed"}})
             finally:
                 await queue.put({"type":"stream_closed","data":{}})
         active_chat_tasks[session_id]=asyncio.create_task(execute())
-        return {"session_id":session_id,"accepted":True,"events_url":"/api/v1/chat/sessions/%s/events" % session_id}
+        return {"session_id":session_id,"message_id":message_id,"bundle_id":bundle_id,"accepted":True,"events_url":"/api/v1/chat/sessions/%s/events" % session_id}
     @app.get("/api/v1/chat/sessions/{session_id}/events")
     async def chat_events(session_id: int,user: Principal = Depends(require("network:read"))):
         if not service.audit.owns_session(session_id,user.subject): raise HTTPException(404,"session not found")
@@ -203,5 +230,5 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
                 await asyncio.sleep(2)
         return StreamingResponse(generate(),media_type="text/event-stream")
     @app.get("/", response_class=HTMLResponse)
-    def ui(): return """<!doctype html><html><head><title>SD-WAN v5 Management</title><style>body{font-family:system-ui;background:#f3f6fa;color:#172033;max-width:1180px;margin:2rem auto;padding:0 1rem}.panel{background:white;border-radius:12px;padding:1rem;margin:1rem 0;box-shadow:0 1px 5px #ccd}input,button{padding:.6rem;margin:.2rem;border:1px solid #aab;border-radius:6px}button{background:#155eef;color:white}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem}.card{background:#eef4ff;padding:1rem;border-radius:8px}pre{padding:1rem;background:#101828;color:#d0f8d0;overflow:auto;max-height:480px}.warn{color:#9a4d00}</style></head><body><h1>SD-WAN v5 Management</h1><p class=warn>Read-only laboratory observability. No topology, Policy, ZTP, route, tunnel, Docker, or shell control is exposed.</p><div class=panel><input id=u placeholder=username><input id=p type=password placeholder=password><button onclick=login()>Login</button><button onclick=load()>Refresh dashboard</button></div><div id=cards class=grid></div><div class=panel><h2>Read-only assisted diagnosis</h2><input id=q placeholder='Ask for a status summary' size=42><button onclick=chat()>Ask</button><pre id=o>Authenticate, then refresh dashboard.</pre></div><script>let t='',sid=0;const o=document.getElementById('o'),u=document.getElementById('u'),p=document.getElementById('p'),cards=document.getElementById('cards'),q=document.getElementById('q');const hdr=()=>({Authorization:'Bearer '+t,'Content-Type':'application/json'});function card(k,v){return '<div class=card><b>'+k+'</b><br>'+v+'</div>'}async function login(){let r=await fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value,password:p.value})});let x=await r.json();t=x.access_token||'';if(!t){o.textContent='Login failed: '+(x.detail||'invalid credentials');return}o.textContent='Authenticated as '+x.role;await load()}async function load(){let r=await fetch('/api/v1/dashboard',{headers:hdr()});let x=await r.json();if(!r.ok){o.textContent='Dashboard error: '+(x.detail||r.status);return}cards.innerHTML=card('Sites',x.sites.length)+card('Route ownership',x.ownership.length)+card('Devices',x.devices.length)+card('Policy DB',x.health.sources.policy_db)+card('ZTP DB',x.health.sources.ztp_db);o.textContent='Dashboard loaded. Ask a read-only SD-WAN question below.'}async function consumeEvents(){let r=await fetch('/api/v1/chat/sessions/'+sid+'/events',{headers:hdr()});if(!r.ok){o.textContent='Event stream error: '+r.status;return}let reader=r.body.getReader(),decoder=new TextDecoder(),buffer='';while(true){let part=await reader.read();if(part.done)break;buffer+=decoder.decode(part.value,{stream:true});let blocks=buffer.split('\\n\\n');buffer=blocks.pop();for(let block of blocks){let name='',data='';for(let line of block.split('\\n')){if(line.startsWith('event:'))name=line.slice(6).trim();if(line.startsWith('data:'))data=line.slice(5).trim()}if(!data)continue;let value=JSON.parse(data);if(name==='assistant_delta')o.textContent+=value.text;if(name==='tool_call_started')o.textContent+='\\n[Using '+value.tool+']\\n';if(name==='agent_error')o.textContent+='\\nError: '+value.reason}}}async function chat(){if(!sid){let r=await fetch('/api/v1/chat/sessions',{method:'POST',headers:hdr()});sid=(await r.json()).session_id}o.textContent='';let events=consumeEvents();let r=await fetch('/api/v1/chat/sessions/'+sid+'/messages',{method:'POST',headers:hdr(),body:JSON.stringify({message:q.value})});if(!r.ok)o.textContent=JSON.stringify(await r.json(),null,2);await events}</script></body></html>"""
+    def ui(): return """<!doctype html><html><head><title>SD-WAN v5 Management</title><style>body{font-family:system-ui;background:#f3f6fa;color:#172033;max-width:1180px;margin:2rem auto;padding:0 1rem}.panel{background:white;border-radius:12px;padding:1rem;margin:1rem 0;box-shadow:0 1px 5px #ccd}input,button{padding:.6rem;margin:.2rem;border:1px solid #aab;border-radius:6px}button{background:#155eef;color:white}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem}.card{background:#eef4ff;padding:1rem;border-radius:8px}pre{padding:1rem;background:#101828;color:#d0f8d0;overflow:auto;max-height:480px}.warn{color:#9a4d00}</style></head><body><h1>SD-WAN v5 Management</h1><p class=warn>Read-only laboratory observability. No topology, Policy, ZTP, route, tunnel, Docker, or shell control is exposed.</p><div class=panel><input id=u placeholder=username><input id=p type=password placeholder=password><button onclick=login()>Login</button><button onclick=load()>Refresh dashboard</button></div><div id=cards class=grid></div><div class=panel><h2>Read-only assisted diagnosis</h2><input id=q placeholder='Ask for a status summary' size=42><button onclick=chat()>Ask</button><h3>Verified answer</h3><pre id=o>Authenticate, then refresh dashboard.</pre><h3>Agent activity</h3><pre id=a></pre></div><script>let t='',sid=0;const o=document.getElementById('o'),a=document.getElementById('a'),u=document.getElementById('u'),p=document.getElementById('p'),cards=document.getElementById('cards'),q=document.getElementById('q');const hdr=()=>({Authorization:'Bearer '+t,'Content-Type':'application/json'});function card(k,v){return '<div class=card><b>'+k+'</b><br>'+v+'</div>'}async function login(){let r=await fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value,password:p.value})});let x=await r.json();t=x.access_token||'';if(!t){o.textContent='Login failed: '+(x.detail||'invalid credentials');return}o.textContent='Authenticated as '+x.role;await load()}async function load(){let r=await fetch('/api/v1/dashboard',{headers:hdr()});let x=await r.json();if(!r.ok){o.textContent='Dashboard error: '+(x.detail||r.status);return}cards.innerHTML=card('Sites',x.sites.length)+card('Route ownership',x.ownership.length)+card('Devices',x.devices.length)+card('Policy DB',x.health.sources.policy_db)+card('ZTP DB',x.health.sources.ztp_db);o.textContent='Dashboard loaded. Ask a read-only SD-WAN question below.'}async function consumeEvents(){let r=await fetch('/api/v1/chat/sessions/'+sid+'/events',{headers:hdr()});if(!r.ok){o.textContent='Event stream error: '+r.status;return}let reader=r.body.getReader(),decoder=new TextDecoder(),buffer='';while(true){let part=await reader.read();if(part.done)break;buffer+=decoder.decode(part.value,{stream:true});let blocks=buffer.split('\\n\\n');buffer=blocks.pop();for(let block of blocks){let name='',data='';for(let line of block.split('\\n')){if(line.startsWith('event:'))name=line.slice(6).trim();if(line.startsWith('data:'))data=line.slice(5).trim()}if(!data)continue;let value=JSON.parse(data);if(name==='assistant_delta')o.textContent+=value.text;if(name==='tool_call_started')o.textContent+='\\n[Using '+value.tool+']\\n';if(name==='agent_error')o.textContent+='\\nError: '+value.reason}}}async function chat(){if(!sid){let r=await fetch('/api/v1/chat/sessions',{method:'POST',headers:hdr()});sid=(await r.json()).session_id}o.textContent='Waiting for verified evidence...';a.textContent='';let events=consumeEvents();let r=await fetch('/api/v1/chat/sessions/'+sid+'/messages',{method:'POST',headers:hdr(),body:JSON.stringify({message:q.value})});if(!r.ok)o.textContent=JSON.stringify(await r.json(),null,2);await events}</script></body></html>"""
     return app

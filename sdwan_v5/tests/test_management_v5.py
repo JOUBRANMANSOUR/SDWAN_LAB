@@ -39,6 +39,8 @@ class ManagementTests(unittest.TestCase):
                     {"dst":"198.18.0.10","table":102,"dev":"node1-bb","gateway":"192.168.20.254"},
                     {"dst":"fe80::/64","table":1101,"dev":"wg-h1-mpls"},
                 ]}
+            def route_lookup(self, site, destination, source=None, fwmark=None):
+                return {"availability":"AVAILABLE","value":[{"dst":destination,"table":1101,"dev":"wg-h1-mpls"}]}
             def rules(self, site):
                 return {"availability":"AVAILABLE","value":[
                     {"priority":1101,"fwmark":"0x1001","fwmask":"0x30ff","table":1101},
@@ -47,14 +49,13 @@ class ManagementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             config = ManagementConfig(ROOT/'config/topology.yaml', Path(directory)/'policy.db', Path(directory)/'ztp.db', Path(directory), 'test-secret', '', '')
             service = ManagementService(config); service.runtime = Runtime()
-            report = service.route_decision_report('node1')
+            report = service.route_decision_report('node1', '10.2.0.10', fwmark=0x1001)
         self.assertTrue(report['available'])
-        rendered = report['operator_report']
-        self.assertIn('packets matching fwmark `0x1001/0x30ff` select table `1101`', rendered)
-        self.assertIn('interface `node1-bb`; 1 destination(s); next hop `192.168.20.254`', rendered)
-        self.assertIn('do not by themselves prove the route selected', rendered)
-        self.assertNotIn('kernel', rendered.lower())
-        self.assertNotIn('static', rendered.lower())
+        self.assertEqual(report['selected_routing_table'], 1101)
+        self.assertEqual(report['matched_rule']['table'], 1101)
+        self.assertEqual(report['output_interface'], 'wg-h1-mpls')
+        self.assertEqual(report['derived']['hub'], 'hub1')
+        self.assertIn('connection_mark', [item['field'] for item in report['unknowns']])
 
     def test_no_http_mcp_endpoint_and_session_ownership(self):
         with tempfile.TemporaryDirectory() as directory:

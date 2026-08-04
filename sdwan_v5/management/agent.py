@@ -49,6 +49,7 @@ class OllamaClaudeRunner:
                           "Do not infer, invent, rename, or generalize facts beyond returned fields. Do not describe an absent field as main, kernel, static, DNS, SIMPL, or any other route type. "
                           "For empty or null values say 'not reported'. State unavailable when evidence is absent. "
                           "Unless the user explicitly asks for raw JSON, answer in concise natural language with compact Markdown tables; summarize route groups instead of listing every repeated destination. Do not mention route protocol unless the user explicitly asks for it. "
+                          "When a tool returns an operator_report, reproduce that report verbatim under the heading Verified report. You may add a short explanation only of its explicit facts and interpretation_constraints; do not add an operational interpretation of your own. "
                           "Never suggest or perform configuration changes.\n\nUser question: " + prompt)
         resume = claude_session_id in self._started_sessions
         cmd=command_for(self.config, factual_prompt, claude_session_id, resume=resume); env=restricted_environment(self.config, token, session_id)

@@ -5,6 +5,7 @@ import unittest
 from fastapi.testclient import TestClient
 from sdwan_v5.management.app import create_app
 from sdwan_v5.management.config import ManagementConfig
+from sdwan_v5.management.service import ManagementService
 ROOT = Path(__file__).resolve().parents[1]
 class ManagementTests(unittest.TestCase):
     def app(self, directory):
@@ -30,6 +31,31 @@ class ManagementTests(unittest.TestCase):
             self.assertEqual(response.status_code,202); self.assertTrue(response.json()['accepted'])
             self.assertEqual(len(client.get('/api/v1/chat/sessions/%s'%session,headers=headers).json()),2)
             self.assertTrue(client.get('/api/v1/audit',headers=headers).json())
+    def test_route_decision_report_is_deterministic_and_evidence_bounded(self):
+        class Runtime:
+            def routes(self, site):
+                return {"availability":"AVAILABLE","value":[
+                    {"dst":"10.2.0.0/24","table":1101,"dev":"wg-h1-mpls"},
+                    {"dst":"198.18.0.10","table":102,"dev":"node1-bb","gateway":"192.168.20.254"},
+                    {"dst":"fe80::/64","table":1101,"dev":"wg-h1-mpls"},
+                ]}
+            def rules(self, site):
+                return {"availability":"AVAILABLE","value":[
+                    {"priority":1101,"fwmark":"0x1001","fwmask":"0x30ff","table":1101},
+                    {"priority":2002,"fwmark":"0x2","fwmask":"0xff","table":102},
+                ]}
+        with tempfile.TemporaryDirectory() as directory:
+            config = ManagementConfig(ROOT/'config/topology.yaml', Path(directory)/'policy.db', Path(directory)/'ztp.db', Path(directory), 'test-secret', '', '')
+            service = ManagementService(config); service.runtime = Runtime()
+            report = service.route_decision_report('node1')
+        self.assertTrue(report['available'])
+        rendered = report['operator_report']
+        self.assertIn('packets matching fwmark `0x1001/0x30ff` select table `1101`', rendered)
+        self.assertIn('interface `node1-bb`; 1 destination(s); next hop `192.168.20.254`', rendered)
+        self.assertIn('do not by themselves prove the route selected', rendered)
+        self.assertNotIn('kernel', rendered.lower())
+        self.assertNotIn('static', rendered.lower())
+
     def test_no_http_mcp_endpoint_and_session_ownership(self):
         with tempfile.TemporaryDirectory() as directory:
             client=self.app(directory); viewer={'Authorization':'Bearer '+self.token(client,'viewer')}; admin={'Authorization':'Bearer '+self.token(client,'admin')}

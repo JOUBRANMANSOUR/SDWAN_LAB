@@ -71,6 +71,69 @@ class ManagementService:
                     policy_rules.append({key:rule.get(key) for key in ("priority","fwmark","fwmask","table","src","dst") if rule.get(key) is not None})
         return {"available":True,"site":site,"route_groups":route_groups,"routing_rules":policy_rules[:128],"return_affinity":{"configuration":"connmark-based; routes are selected by persistent connection mark and policy rule","evidence":"inspect the listed fwmark policy rules and selected WireGuard output interface"}}
 
+    def route_decision_report(self, site: str) -> dict[str, Any]:
+        """Render a deterministic, evidence-only route-decision report.
+
+        This is deliberately rendered here rather than delegated to an LLM.  The
+        report describes installed policy rules and route groups; it does not
+        claim which route an unobserved packet will select.
+        """
+        summary = self.route_summary(site)
+        if not summary.get("available"):
+            return {"available": False, "site": site, "reason": summary.get("reason", "routes unavailable")}
+
+        rules = summary.get("routing_rules", [])
+        groups = summary.get("route_groups", [])
+        lines = ["## Verified route-decision evidence for `{}`".format(site), "", "### Installed policy rules"]
+        if rules:
+            for rule in rules:
+                priority = rule.get("priority", "not reported")
+                mark = rule.get("fwmark", "not reported")
+                mask = rule.get("fwmask")
+                table = rule.get("table", "not reported")
+                match = str(mark) + ("/" + str(mask) if mask is not None else "")
+                lines.append("- Priority `{}`: packets matching fwmark `{}` select table `{}`.".format(priority, match, table))
+        else:
+            lines.append("- No fwmark policy rules were reported.")
+
+        lines.extend(["", "### Installed route groups"])
+        if groups:
+            for group in groups:
+                table = group.get("table", "not reported")
+                interface = group.get("output_interface", "not reported")
+                destinations = group.get("destinations", [])
+                count = len(destinations) if isinstance(destinations, list) else 0
+                rendered_destinations = ", ".join(str(item) for item in destinations[:8]) if isinstance(destinations, list) else ""
+                if count > 8:
+                    rendered_destinations += ", …"
+                details = ["table `{}`".format(table), "interface `{}`".format(interface), "{} destination(s)".format(count)]
+                if group.get("next_hop") is not None:
+                    details.append("next hop `{}`".format(group["next_hop"]))
+                lines.append("- {}. Destinations: {}.".format(
+                    "; ".join(details), rendered_destinations or "not reported"))
+        else:
+            lines.append("- No relevant overlay or direct-egress route groups were reported.")
+
+        lines.extend([
+            "", "### Evidence boundary",
+            "- The installed rules show how an observed fwmark maps to a routing table.",
+            "- The installed route groups show destinations available in each reported table.",
+            "- These data do not identify the fwmark of a specific unobserved packet; therefore they do not by themselves prove the route selected for that packet.",
+            "- Return affinity is configured as connmark-based according to the runtime evidence.",
+        ])
+        report = "\n".join(lines)
+        return {
+            "available": True,
+            "site": site,
+            "operator_report": report,
+            "facts": {"routing_rules": rules, "route_groups": groups, "return_affinity": summary.get("return_affinity")},
+            "interpretation_constraints": [
+                "Describe only policy-rule-to-table mappings and reported route groups.",
+                "For a particular packet, require its observed fwmark before stating a selected table or interface.",
+                "Do not assign a route type, lifetime, intent, or traffic class unless that field is present in facts.",
+            ],
+        }
+
     def hub_view(self, hub: str) -> dict[str, Any]:
         if hub not in self.topology.hubs: return {"availability":"UNAVAILABLE", "reason":"unknown hub"}
         return {"hub":hub,"configured":{"management_ip":str(self.topology.hubs[hub].management_ip)},"runtime":self.runtime_view(hub)}

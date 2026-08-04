@@ -1,6 +1,6 @@
 """Safe Ollama -> Claude Code subprocess runner for the read-only web agent."""
 from __future__ import annotations
-import asyncio, json
+import asyncio, json, uuid
 from dataclasses import dataclass
 from typing import AsyncIterator, Dict, List
 from .auth import Principal, issue_agent_context
@@ -26,7 +26,8 @@ class OllamaClaudeRunner:
     def __init__(self, config: ManagementConfig): self.config=config
     async def run(self, prompt: str, session_id: str, principal: Principal) -> AsyncIterator[AgentEvent]:
         token=issue_agent_context(self.config.signing_secret, principal, session_id, self.config.agent_context_audience, self.config.agent_context_ttl_seconds)
-        cmd=command_for(self.config, prompt, session_id); env=restricted_environment(self.config, token, session_id)
+        claude_session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "sdwan-v5-web-session:" + session_id))
+        cmd=command_for(self.config, prompt, claude_session_id); env=restricted_environment(self.config, token, session_id)
         if not self.config.mcp_config.is_file() or not self.config.claude_settings.is_file():
             yield AgentEvent("agent_error", {"reason":"agent configuration is unavailable"}); return
         try:

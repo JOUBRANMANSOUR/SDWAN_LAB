@@ -74,6 +74,37 @@ def _routing_rules_table(rules: Any) -> List[str]:
             _markdown(rule.get("src"))))
     return lines
 
+def _wireguard_tunnels_table(value: Any) -> List[str]:
+    if not isinstance(value, dict):
+        return ["- **tunnels**: `{}`".format(json.dumps(value, sort_keys=True, default=str))]
+    availability=value.get("availability", "not reported")
+    raw=value.get("value")
+    if availability != "AVAILABLE" or not isinstance(raw, str):
+        return ["- **availability**: `{}`".format(_markdown(availability))]
+    rows=[]; current=None
+    for line in raw.splitlines():
+        stripped=line.strip()
+        if stripped.startswith("interface: "):
+            if current is not None:
+                rows.append(current)
+            current={"interface":stripped.split(": ",1)[1]}
+        elif current is not None:
+            for key, label in (("endpoint: ", "endpoint"), ("latest handshake: ", "handshake"), ("transfer: ", "transfer"), ("persistent keepalive: ", "keepalive"), ("allowed ips: ", "allowed_ips")):
+                if stripped.startswith(key):
+                    current[label]=stripped.split(": ",1)[1]
+                    break
+    if current is not None:
+        rows.append(current)
+    if not rows:
+        return ["- **availability**: `AVAILABLE`", "- Tunnel output was present but did not contain an interface record."]
+    lines=["| Interface | Endpoint | Latest handshake | Transfer | Keepalive | Allowed IPs |", "|---|---|---|---|---|---|"]
+    for row in rows:
+        lines.append("| {} | {} | {} | {} | {} | {} |".format(
+            _markdown(row.get("interface")), _markdown(row.get("endpoint")),
+            _markdown(row.get("handshake")), _markdown(row.get("transfer")),
+            _markdown(row.get("keepalive")), _markdown(row.get("allowed_ips"))))
+    return lines
+
 def _render_fact(fact: Dict[str, Any]) -> List[str]:
     kind=str(fact.get("fact_kind", "evidence"))
     value=fact.get("value")
@@ -81,6 +112,8 @@ def _render_fact(fact: Dict[str, Any]) -> List[str]:
         return ["### Installed route groups"] + _route_groups_table(value)
     if kind == "routing_rules":
         return ["### Installed policy rules"] + _routing_rules_table(value)
+    if kind == "tunnels":
+        return ["### Observed WireGuard tunnels"] + _wireguard_tunnels_table(value)
     return ["- **{}**: `{}`".format(kind, json.dumps(value, sort_keys=True, default=str))]
 
 def render_verified_answer(validation: Dict[str, Any], bundle: Dict[str, Any]) -> str:

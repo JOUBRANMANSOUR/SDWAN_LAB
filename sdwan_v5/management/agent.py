@@ -46,7 +46,8 @@ class OllamaClaudeRunner:
         token=issue_agent_context(self.config.signing_secret, principal, session_id, self.config.agent_context_audience, self.config.agent_context_ttl_seconds)
         claude_session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "sdwan-v5-web-session:" + session_id))
         factual_prompt = ("You are a read-only SD-WAN diagnostic assistant. Use only approved SD-WAN MCP tools for current facts. "
-                          "Do not infer, invent, or claim active state that a tool did not return; state unavailable when evidence is absent. "
+                          "Do not infer, invent, rename, or generalize facts beyond returned fields. Do not describe an absent field as main, kernel, static, DNS, SIMPL, or any other route type. "
+                          "For empty or null values say 'not reported'. State unavailable when evidence is absent. "
                           "Never suggest or perform configuration changes.\n\nUser question: " + prompt)
         resume = claude_session_id in self._started_sessions
         cmd=command_for(self.config, factual_prompt, claude_session_id, resume=resume); env=restricted_environment(self.config, token, session_id)

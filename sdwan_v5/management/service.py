@@ -48,11 +48,13 @@ class ManagementService:
         selected=[]
         for route in routes.get("value",[]):
             dev=str(route.get("dev", "")); table=str(route.get("table", "")); dst=str(route.get("dst", "default"))
-            if not table or not (dev.startswith("wg-") or table.startswith("11") or table.startswith("12")): continue
+            is_overlay=dev.startswith("wg-")
+            is_direct=table in {str(item.route_table) for item in self.topology.transports.values()} and dev in {site + "-bb", site + "-lte"}
+            if not table or not (is_overlay or is_direct): continue
             if ":" in dst or route.get("type") in ("local","broadcast","multicast"): continue
-            bits=dev.split("-"); hub=("hub"+bits[1][1:]) if len(bits) >= 3 and bits[1].startswith("h") else None
-            transport=bits[2] if len(bits) >= 3 else None
-            selected.append({"destination":dst,"table":table,"fwmark_table":table,"next_hop":route.get("gateway"),"output_interface":dev,"hub":hub,"transport":transport})
+            bits=dev.split("-"); hub=("hub"+bits[1][1:]) if is_overlay and len(bits) >= 3 and bits[1].startswith("h") else None
+            transport=bits[2] if is_overlay and len(bits) >= 3 else (dev.rsplit("-",1)[-1] if is_direct else None)
+            selected.append({"destination":dst,"table":table,"fwmark_table":table,"next_hop":route.get("gateway"),"output_interface":dev,"hub":hub,"transport":transport,"egress_mode":"hub_overlay" if is_overlay else "direct_internet"})
         selected.sort(key=lambda item:(str(item["table"]),str(item["destination"])))
         grouped={}
         for route in selected:

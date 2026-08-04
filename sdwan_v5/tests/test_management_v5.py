@@ -27,7 +27,7 @@ class ManagementTests(unittest.TestCase):
                 yield AgentEvent('agent_completed', {})
             with patch('sdwan_v5.management.app.OllamaClaudeRunner.run', fake_run):
                 response=client.post('/api/v1/chat/sessions/%s/messages'%session,headers=headers,json={'message':'status'})
-            self.assertEqual(response.status_code,200); self.assertTrue(response.json()['accepted'])
+            self.assertEqual(response.status_code,202); self.assertTrue(response.json()['accepted'])
             self.assertEqual(len(client.get('/api/v1/chat/sessions/%s'%session,headers=headers).json()),2)
             self.assertTrue(client.get('/api/v1/audit',headers=headers).json())
     def test_no_http_mcp_endpoint_and_session_ownership(self):

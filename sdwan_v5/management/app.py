@@ -1,6 +1,7 @@
 """FastAPI read-only management REST API and minimal SSE/UI surface."""
 from __future__ import annotations
 import asyncio, json, uuid
+from typing import Dict
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -17,6 +18,8 @@ class ChatRequest(BaseModel):
     context: dict = {}
 def create_app(config: ManagementConfig | None = None) -> FastAPI:
     config=config or ManagementConfig.from_env(); service=ManagementService(config); runner=OllamaClaudeRunner(config); app=FastAPI(title="SD-WAN v5 Management", version="1.0.0")
+    event_queues: Dict[int, asyncio.Queue] = {}
+    active_chat_tasks: Dict[int, asyncio.Task] = {}
     @app.middleware("http")
     async def audit_request(request: Request, call_next):
         request_id = str(uuid.uuid4())
@@ -149,27 +152,42 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
     def chat_messages(session_id: int,user: Principal = Depends(require("network:read"))):
         if not service.audit.owns_session(session_id,user.subject): raise HTTPException(404,"session not found")
         return service.audit.messages(session_id)
-    @app.post("/api/v1/chat/sessions/{session_id}/messages")
+    def event_queue(session_id: int) -> asyncio.Queue:
+        if session_id not in event_queues: event_queues[session_id] = asyncio.Queue(maxsize=512)
+        return event_queues[session_id]
+    @app.post("/api/v1/chat/sessions/{session_id}/messages", status_code=202)
     async def chat(session_id: int,value: ChatRequest,user: Principal = Depends(require("network:read"))):
         if not service.audit.owns_session(session_id,user.subject): raise HTTPException(404,"session not found")
+        if session_id in active_chat_tasks and not active_chat_tasks[session_id].done(): raise HTTPException(409,"a message is already running for this session")
         prompt=(value.message or value.prompt).strip()
         if not prompt or len(prompt)>4000: raise HTTPException(422,"message must be 1..4000 characters")
-        service.audit.add_message(session_id,user.subject,prompt); events=[]; text=[]
-        async for event in runner.run(prompt,str(session_id),user):
-            events.append({"type":event.type,"data":event.data})
-            if event.type=="assistant_delta": text.append(str(event.data.get("text","")))
-        reply="".join(text) or "The read-only agent did not return a response. Consult the REST evidence endpoints."
-        service.audit.add_message(session_id,"management",reply); service.audit.add(user.subject,"CHAT",str(session_id),"completed","read-only Ollama Claude gateway")
-        return {"session_id":session_id,"accepted":True,"reply":reply,"events":events}
+        queue = event_queue(session_id); service.audit.add_message(session_id,user.subject,prompt)
+        async def execute():
+            text=[]; await queue.put({"type":"session_started","data":{"session_id":session_id}})
+            try:
+                async for event in runner.run(prompt,str(session_id),user):
+                    await queue.put({"type":event.type,"data":event.data})
+                    if event.type=="assistant_delta": text.append(str(event.data.get("text","")))
+                reply="".join(text) or "The read-only agent did not return a response. Consult the REST evidence endpoints."
+                service.audit.add_message(session_id,"management",reply); service.audit.add(user.subject,"CHAT",str(session_id),"completed","read-only Ollama Claude gateway")
+            except Exception:
+                await queue.put({"type":"agent_error","data":{"reason":"agent gateway failed"}})
+            finally:
+                await queue.put({"type":"stream_closed","data":{}})
+        active_chat_tasks[session_id]=asyncio.create_task(execute())
+        return {"session_id":session_id,"accepted":True,"events_url":"/api/v1/chat/sessions/%s/events" % session_id}
     @app.get("/api/v1/chat/sessions/{session_id}/events")
     async def chat_events(session_id: int,user: Principal = Depends(require("network:read"))):
         if not service.audit.owns_session(session_id,user.subject): raise HTTPException(404,"session not found")
+        queue=event_queue(session_id)
         async def generate():
-            yield "event: session_started\ndata: "+json.dumps({"session_id":session_id})+"\n\n"
-            for message in service.audit.messages(session_id):
-                yield "event: assistant_delta\ndata: "+json.dumps({"text":message["content"][:8192]})+"\n\n"
-            yield "event: heartbeat\ndata: {}\n\n"
-        return StreamingResponse(generate(),media_type="text/event-stream")
+            while True:
+                try: item=await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield "event: heartbeat\ndata: {}\n\n"; continue
+                if item["type"] == "stream_closed": break
+                yield "event: %s\ndata: %s\n\n" % (item["type"], json.dumps(item["data"]))
+        return StreamingResponse(generate(),media_type="text/event-stream",headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
     @app.delete("/api/v1/chat/sessions/{session_id}")
     def delete_chat(session_id: int,user: Principal = Depends(require("network:read"))):
         if not service.audit.delete_session(session_id,user.subject): raise HTTPException(404,"session not found")
@@ -185,5 +203,5 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
                 await asyncio.sleep(2)
         return StreamingResponse(generate(),media_type="text/event-stream")
     @app.get("/", response_class=HTMLResponse)
-    def ui(): return """<!doctype html><html><head><title>SD-WAN v5 Management</title><style>body{font-family:system-ui;background:#f3f6fa;color:#172033;max-width:1180px;margin:2rem auto;padding:0 1rem}.panel{background:white;border-radius:12px;padding:1rem;margin:1rem 0;box-shadow:0 1px 5px #ccd}input,button{padding:.6rem;margin:.2rem;border:1px solid #aab;border-radius:6px}button{background:#155eef;color:white}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem}.card{background:#eef4ff;padding:1rem;border-radius:8px}pre{padding:1rem;background:#101828;color:#d0f8d0;overflow:auto;max-height:480px}.warn{color:#9a4d00}</style></head><body><h1>SD-WAN v5 Management</h1><p class=warn>Read-only laboratory observability. No topology, Policy, ZTP, route, tunnel, Docker, or shell control is exposed.</p><div class=panel><input id=u placeholder=username><input id=p type=password placeholder=password><button onclick=login()>Login</button><button onclick=load()>Refresh dashboard</button></div><div id=cards class=grid></div><div class=panel><h2>Read-only assisted diagnosis</h2><input id=q placeholder='Ask for a status summary' size=42><button onclick=chat()>Ask</button><pre id=o>Authenticate, then refresh dashboard.</pre></div><script>let t='',sid=0;const o=document.getElementById('o');const hdr=()=>({Authorization:'Bearer '+t,'Content-Type':'application/json'});function card(k,v){return '<div class=card><b>'+k+'</b><br>'+v+'</div>'}async function login(){let r=await fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value,password:p.value})});let x=await r.json();t=x.access_token||'';o.textContent=t?'Authenticated as '+x.role:JSON.stringify(x)}async function load(){let r=await fetch('/api/v1/dashboard',{headers:hdr()});let x=await r.json();if(!r.ok){o.textContent=JSON.stringify(x,null,2);return}cards.innerHTML=card('Sites',x.sites.length)+card('Route ownership',x.ownership.length)+card('Devices',x.devices.length)+card('Policy DB',x.health.sources.policy_db)+card('ZTP DB',x.health.sources.ztp_db);o.textContent=JSON.stringify(x,null,2)}async function chat(){if(!sid){let r=await fetch('/api/v1/chat/sessions',{method:'POST',headers:hdr()});sid=(await r.json()).session_id}let r=await fetch('/api/v1/chat/sessions/'+sid+'/messages',{method:'POST',headers:hdr(),body:JSON.stringify({message:q.value})});let x=await r.json();o.textContent=r.ok?(x.reply||'No assistant reply was returned.'):JSON.stringify(x,null,2)}</script></body></html>"""
+    def ui(): return """<!doctype html><html><head><title>SD-WAN v5 Management</title><style>body{font-family:system-ui;background:#f3f6fa;color:#172033;max-width:1180px;margin:2rem auto;padding:0 1rem}.panel{background:white;border-radius:12px;padding:1rem;margin:1rem 0;box-shadow:0 1px 5px #ccd}input,button{padding:.6rem;margin:.2rem;border:1px solid #aab;border-radius:6px}button{background:#155eef;color:white}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem}.card{background:#eef4ff;padding:1rem;border-radius:8px}pre{padding:1rem;background:#101828;color:#d0f8d0;overflow:auto;max-height:480px}.warn{color:#9a4d00}</style></head><body><h1>SD-WAN v5 Management</h1><p class=warn>Read-only laboratory observability. No topology, Policy, ZTP, route, tunnel, Docker, or shell control is exposed.</p><div class=panel><input id=u placeholder=username><input id=p type=password placeholder=password><button onclick=login()>Login</button><button onclick=load()>Refresh dashboard</button></div><div id=cards class=grid></div><div class=panel><h2>Read-only assisted diagnosis</h2><input id=q placeholder='Ask for a status summary' size=42><button onclick=chat()>Ask</button><pre id=o>Authenticate, then refresh dashboard.</pre></div><script>let t='',sid=0;const o=document.getElementById('o');const hdr=()=>({Authorization:'Bearer '+t,'Content-Type':'application/json'});function card(k,v){return '<div class=card><b>'+k+'</b><br>'+v+'</div>'}async function login(){let r=await fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value,password:p.value})});let x=await r.json();t=x.access_token||'';o.textContent=t?'Authenticated as '+x.role:JSON.stringify(x)}async function load(){let r=await fetch('/api/v1/dashboard',{headers:hdr()});let x=await r.json();if(!r.ok){o.textContent=JSON.stringify(x,null,2);return}cards.innerHTML=card('Sites',x.sites.length)+card('Route ownership',x.ownership.length)+card('Devices',x.devices.length)+card('Policy DB',x.health.sources.policy_db)+card('ZTP DB',x.health.sources.ztp_db);o.textContent=JSON.stringify(x,null,2)}async function chat(){if(!sid){let r=await fetch('/api/v1/chat/sessions',{method:'POST',headers:hdr()});sid=(await r.json()).session_id}o.textContent='';let stream=new EventSource('/api/v1/chat/sessions/'+sid+'/events',{withCredentials:false});stream.addEventListener('assistant_delta',e=>{o.textContent+=JSON.parse(e.data).text});stream.addEventListener('tool_call_started',e=>{o.textContent+='\n[Using '+JSON.parse(e.data).tool+']\n'});stream.addEventListener('agent_error',e=>{o.textContent+='\nError: '+JSON.parse(e.data).reason;stream.close()});stream.addEventListener('agent_completed',e=>{});let r=await fetch('/api/v1/chat/sessions/'+sid+'/messages',{method:'POST',headers:hdr(),body:JSON.stringify({message:q.value})});if(!r.ok){stream.close();o.textContent=JSON.stringify(await r.json(),null,2)}}</script></body></html>"""
     return app

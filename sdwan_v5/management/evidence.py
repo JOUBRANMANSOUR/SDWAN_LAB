@@ -38,6 +38,51 @@ class EvidenceValidator:
             errors.append({"code":"NO_MCP_EVIDENCE"})
         return {"valid":not errors,"answer":answer.model_dump(mode="json"),"validated_claims":accepted,"rejected_claims":[item.get("claim_id") for item in errors if item.get("claim_id")],"errors":errors}
 
+def _markdown(value: Any) -> str:
+    """Render evidence values without adding operational interpretation."""
+    if value is None:
+        return "not reported"
+    return str(value).replace("|", "\\|").replace("\n", " ")
+
+def _route_groups_table(groups: Any) -> List[str]:
+    if not isinstance(groups, list):
+        return ["- **route_groups**: `{}`".format(json.dumps(groups, sort_keys=True, default=str))]
+    lines=["| Table | Interface | Hub | Transport | Next hop | Destinations |", "|---|---|---|---|---|---|"]
+    for group in groups:
+        if not isinstance(group, dict):
+            lines.append("| not reported | not reported | not reported | not reported | not reported | `{}` |".format(_markdown(group)))
+            continue
+        destinations=group.get("destinations", [])
+        destination_text=", ".join(_markdown(item) for item in destinations) if isinstance(destinations, list) else _markdown(destinations)
+        lines.append("| {} | {} | {} | {} | {} | {} |".format(
+            _markdown(group.get("table")), _markdown(group.get("output_interface")),
+            _markdown(group.get("hub")), _markdown(group.get("transport")),
+            _markdown(group.get("next_hop")), destination_text or "not reported"))
+    return lines
+
+def _routing_rules_table(rules: Any) -> List[str]:
+    if not isinstance(rules, list):
+        return ["- **routing_rules**: `{}`".format(json.dumps(rules, sort_keys=True, default=str))]
+    lines=["| Priority | FWMark | Mask | Table | Source |", "|---|---|---|---|---|"]
+    for rule in rules:
+        if not isinstance(rule, dict):
+            lines.append("| not reported | not reported | not reported | not reported | not reported |")
+            continue
+        lines.append("| {} | {} | {} | {} | {} |".format(
+            _markdown(rule.get("priority")), _markdown(rule.get("fwmark")),
+            _markdown(rule.get("fwmask")), _markdown(rule.get("table")),
+            _markdown(rule.get("src"))))
+    return lines
+
+def _render_fact(fact: Dict[str, Any]) -> List[str]:
+    kind=str(fact.get("fact_kind", "evidence"))
+    value=fact.get("value")
+    if kind == "route_groups":
+        return ["### Installed route groups"] + _route_groups_table(value)
+    if kind == "routing_rules":
+        return ["### Installed policy rules"] + _routing_rules_table(value)
+    return ["- **{}**: `{}`".format(kind, json.dumps(value, sort_keys=True, default=str))]
+
 def render_verified_answer(validation: Dict[str, Any], bundle: Dict[str, Any]) -> str:
     answer=validation["answer"]
     if answer["answer_type"] == "conceptual":
@@ -45,10 +90,15 @@ def render_verified_answer(validation: Dict[str, Any], bundle: Dict[str, Any]) -
     facts={str(item.get("fact_id")):item for item in bundle["payload"].get("facts",[]) if item.get("fact_id")}
     lines=["## Verified operational facts"]
     for claim in answer["claims"]:
-        lines.append("\n### {}".format(claim["claim_type"]))
         for fact_id in claim["fact_ids"]:
             fact=facts[fact_id]
-            lines.append("- **{}**: `{}`".format(fact["fact_kind"], json.dumps(fact.get("value"), sort_keys=True, default=str)))
+            rendered=_render_fact(fact)
+            if rendered and rendered[0].startswith("###"):
+                lines.append("\n" + rendered[0])
+                lines.extend(rendered[1:])
+            else:
+                lines.append("\n### {}".format(claim["claim_type"]))
+                lines.extend(rendered)
     unknowns=bundle["payload"].get("unknowns",[])
     limitations=bundle["payload"].get("limitations",[])
     if unknowns:

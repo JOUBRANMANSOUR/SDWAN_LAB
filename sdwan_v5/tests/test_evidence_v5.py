@@ -11,6 +11,21 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(result["valid"])
         rendered=render_verified_answer(result,BUNDLE)
         self.assertIn('1101',rendered); self.assertNotIn('ignored',rendered)
+    def test_route_facts_render_as_tables_without_model_text(self):
+        bundle={"bundle_id":"bundle-routes","payload":{"facts":[
+            {"fact_id":"groups","fact_kind":"route_groups","value":[{"table":"101","output_interface":"wg-h1-mpls","hub":"hub1","transport":"mpls","next_hop":None,"destinations":["10.2.0.0/24"]}]},
+            {"fact_id":"rules","fact_kind":"routing_rules","value":[{"priority":2001,"fwmark":"0x1","fwmask":"0xff","table":"101","src":"all"}]}
+        ],"unknowns":[],"limitations":[]}}
+        answer={"answer_type":"operational","summary":"ignored","claims":[
+            {"claim_id":"groups","claim_type":"routing_table","fact_ids":["groups"],"explanation":None},
+            {"claim_id":"rules","claim_type":"routing_rule","fact_ids":["rules"],"explanation":None}
+        ],"unknowns":[],"limitations":[]}
+        result=self.validator.validate(answer,bundle)
+        rendered=render_verified_answer(result,bundle)
+        self.assertIn("| Table | Interface | Hub |", rendered)
+        self.assertIn("| Priority | FWMark |", rendered)
+        self.assertNotIn("ignored", rendered)
+
     def test_unknown_fact_and_wrong_kind_are_rejected(self):
         unknown={"answer_type":"operational","summary":"x","claims":[{"claim_id":"c","claim_type":"route","fact_ids":["missing"],"explanation":None}],"unknowns":[],"limitations":[]}
         self.assertFalse(self.validator.validate(unknown,BUNDLE)["valid"])

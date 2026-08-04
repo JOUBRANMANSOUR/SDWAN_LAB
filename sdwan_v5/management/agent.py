@@ -41,17 +41,21 @@ def normalized_event(raw: Dict[str, object]) -> AgentEvent:
 class OllamaClaudeRunner:
     def __init__(self, config: ManagementConfig):
         self.config=config
-        self._started_sessions = set()
     async def run(self, prompt: str, session_id: str, principal: Principal, message_id: str = "", bundle_id: str = "") -> AsyncIterator[AgentEvent]:
         token=issue_agent_context(self.config.signing_secret, principal, session_id, self.config.agent_context_audience, self.config.agent_context_ttl_seconds)
-        claude_session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "sdwan-v5-web-session:" + session_id))
+        # A stdio MCP server belongs to one agent process.  Use a fresh Claude
+        # session for each message so a resumed session can never retain a dead
+        # tool connection from a previous subprocess.
+        claude_session_id = str(uuid.uuid4())
         factual_prompt = ("You are a read-only SD-WAN diagnostic assistant. Use approved SD-WAN MCP tools for every current-lab claim. "
                           "For a current operational or mixed question, call at least one relevant MCP tool. Never invent facts, values, route types, selected paths, or unavailable fields. "
                           "Your final response MUST be one JSON object matching this schema: {answer_type: conceptual|operational|mixed, summary: string, claims: [{claim_id:string, claim_type:site_status|tunnel_status|routing_rule|routing_table|route|next_hop|output_interface|selected_hub|selected_transport|state_comparison|event|limitation, fact_ids:[string], explanation:string|null}], unknowns:[string], limitations:[string]}. "
                           "Use site_status for configured site listings and site status. Never use invented claim types such as observed, configured, or derived. "
                           "For operational or mixed answers, every claim must reference fact_ids returned by MCP in this message. Do not put operational values in summary or explanation; FastAPI renders values from evidence. "
-                          "For conceptual answers, claims must be empty. Never suggest or perform configuration changes.\n\nUser question: " + prompt)
-        resume = claude_session_id in self._started_sessions
+                          "For conceptual answers, claims must be empty. Never suggest or perform configuration changes. "
+                          "Available MCP capabilities: list_sites and get_site_status for configured sites; get_site_tunnels for WireGuard status; get_site_routes for installed route data; explain_route_decision for a specific destination (it requires site and destination); compare_desired_actual for state comparison; get_recent_events for audit evidence. "
+                          "For a question requesting a site route table without a destination, call get_site_routes. Do not claim a tool is unavailable before attempting the relevant approved tool.\n\nUser question: " + prompt)
+        resume = False
         cmd=command_for(self.config, factual_prompt, claude_session_id, resume=resume); env=restricted_environment(self.config, token, session_id, message_id, bundle_id)
         if not self.config.mcp_config.is_file() or not self.config.claude_settings.is_file():
             yield AgentEvent("agent_error", {"reason":"agent configuration is unavailable"}); return
@@ -84,7 +88,6 @@ class OllamaClaudeRunner:
             code=await asyncio.wait_for(proc.wait(), timeout=10)
             if len(stderr) > self.config.claude_max_output_bytes or code != 0: yield AgentEvent("agent_error", {"reason":"agent process did not complete successfully", "exit_code":code})
             else:
-                self._started_sessions.add(claude_session_id)
                 if final_text and not final_emitted:
                     yield AgentEvent("agent_final", {"text":final_text[:16384]})
                 yield AgentEvent("agent_completed", {"session_id":session_id})

@@ -14,14 +14,29 @@ def command_for(config: ManagementConfig, prompt: str, session_id: str) -> List[
 def restricted_environment(config: ManagementConfig, context_token: str, session_id: str) -> Dict[str, str]:
     return {"HOME": config.claude_home, "PATH": config.agent_path, "SDWAN_PROJECT_ROOT": str(config.project_root), "PYTHONPATH": str(config.project_root.parent), "SDWAN_AGENT_CONTEXT_TOKEN": context_token, "SDWAN_CHAT_SESSION_ID": session_id, "SDWAN_MANAGEMENT_SECRET": config.signing_secret, "SDWAN_AGENT_CONTEXT_AUDIENCE": config.agent_context_audience}
 def normalized_event(raw: Dict[str, object]) -> AgentEvent:
-    kind=str(raw.get("type", "")); text=""
-    if kind in ("stream_event", "content_block_delta"):
-        delta=raw.get("event", raw); delta=delta if isinstance(delta, dict) else {}; d=delta.get("delta", {}) if isinstance(delta.get("delta", {}), dict) else {}; text=str(d.get("text", ""))
-    elif kind in ("assistant", "result"):
-        text=str(raw.get("result", raw.get("text", "")))
-    if text: return AgentEvent("assistant_delta", {"text": text[:8192]})
-    if "tool" in kind: return AgentEvent("tool_call_started", {"tool": str(raw.get("name", "sdwan"))[:120]})
-    return AgentEvent("agent_progress", {"state": kind[:120]})
+    """Expose only text deltas and safe MCP activity; never reasoning events."""
+    kind = str(raw.get("type", ""))
+    if kind == "result":
+        return AgentEvent("agent_completed", {"session_id": str(raw.get("session_id", ""))})
+    if kind != "stream_event":
+        return AgentEvent("ignore", {})
+    event = raw.get("event", {})
+    event = event if isinstance(event, dict) else {}
+    event_type = str(event.get("type", ""))
+    if event_type == "content_block_delta":
+        delta = event.get("delta", {})
+        delta = delta if isinstance(delta, dict) else {}
+        if delta.get("type") == "text_delta" and delta.get("text"):
+            return AgentEvent("assistant_delta", {"text": str(delta["text"])[:8192]})
+    if event_type == "content_block_start":
+        block = event.get("content_block", {})
+        block = block if isinstance(block, dict) else {}
+        if block.get("type") == "tool_use":
+            return AgentEvent("tool_call_started", {"tool": str(block.get("name", "sdwan"))[:120]})
+    if event_type == "content_block_stop":
+        return AgentEvent("tool_call_completed", {})
+    return AgentEvent("ignore", {})
+
 class OllamaClaudeRunner:
     def __init__(self, config: ManagementConfig): self.config=config
     async def run(self, prompt: str, session_id: str, principal: Principal) -> AsyncIterator[AgentEvent]:
@@ -43,7 +58,9 @@ class OllamaClaudeRunner:
                 if collected > self.config.claude_max_output_bytes: raise RuntimeError("agent output limit exceeded")
                 try: raw=json.loads(line.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError): continue
-                if isinstance(raw, dict): yield normalized_event(raw)
+                if isinstance(raw, dict):
+                    event = normalized_event(raw)
+                    if event.type != "ignore": yield event
             stderr=await asyncio.wait_for(proc.stderr.read(self.config.claude_max_output_bytes + 1), timeout=10)
             code=await asyncio.wait_for(proc.wait(), timeout=10)
             if len(stderr) > self.config.claude_max_output_bytes or code != 0: yield AgentEvent("agent_error", {"reason":"agent process did not complete successfully", "exit_code":code})

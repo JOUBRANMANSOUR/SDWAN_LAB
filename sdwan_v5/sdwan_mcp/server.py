@@ -20,7 +20,22 @@ def main():
         try: request=json.loads(line); method=request.get("method"); ident=request.get("id")
         except json.JSONDecodeError: continue
         if method=="initialize": response(ident,{"protocolVersion":"2024-11-05","serverInfo":{"name":"sdwan-management-mcp","version":"1.0.0"},"capabilities":{"tools":{}}})
-        elif method=="tools/list": response(ident,{"tools":[{"name":name,"description":"Read-only SD-WAN query","inputSchema":{"type":"object","properties":{"site":{"type":"string"},"hub":{"type":"string"}}}} for name in sorted(TOOLS)]})
+        elif method=="tools/list":
+            site_tools={"get_site_status","get_site_tunnels","get_site_routes","compare_desired_actual","explain_route_decision"}
+            hub_tools={"get_hub_status"}
+            definitions=[]
+            for name in sorted(TOOLS):
+                if name in site_tools:
+                    schema={"type":"object","properties":{"site":{"type":"string","description":"Configured site name, for example node1."}},"required":["site"],"additionalProperties":False}
+                    description="Read-only query for a site. Supply the site name only; do not supply a hub."
+                elif name in hub_tools:
+                    schema={"type":"object","properties":{"hub":{"type":"string","description":"Configured hub name, for example hub1."}},"required":["hub"],"additionalProperties":False}
+                    description="Read-only query for a hub."
+                else:
+                    schema={"type":"object","properties":{},"additionalProperties":False}
+                    description="Read-only SD-WAN query; it takes no arguments."
+                definitions.append({"name":name,"description":description,"inputSchema":schema})
+            response(ident,{"tools":definitions})
         elif method=="tools/call":
             params=request.get("params", {}); name=str(params.get("name", "")); args=params.get("arguments", {})
             if name not in TOOLS: response(ident,error="unknown read-only tool"); continue

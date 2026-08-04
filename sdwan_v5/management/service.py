@@ -157,6 +157,53 @@ class ManagementService:
         if kind == "cloud-vpc": return {"enabled":c.cloud_vpc.enabled,"network":str(c.cloud_vpc.network),"endpoint":str(c.cloud_vpc.app_ip),"gateways":list(c.cloud_vpc.active_gateways),"availability":"CONFIGURED" if c.cloud_vpc.enabled else "DISABLED"}
         return {"availability":"UNAVAILABLE", "reason":"unknown network view"}
 
+    def transport_inventory(self) -> list[dict[str, Any]]:
+        return [{"name":item.name,"network":str(item.network),"switch":item.switch,"dpid":item.dpid,"bandwidth_mbps":item.bandwidth_mbps,"delay_ms":item.delay_ms,"internet_capable":item.internet_capable,"route_table":item.route_table} for item in self.topology.transports.values()]
+
+    def hub_configuration(self, hub: str) -> dict[str, Any]:
+        item=self.topology.hubs[hub]
+        return {"hub":hub,"management_ip":str(item.management_ip),"address_id":item.address_id}
+
+    def cloud_gateways(self) -> list[dict[str, Any]]:
+        cloud=self.topology.cloud_vpc
+        return [{"gateway":name,"active":name in cloud.active_gateways,"vpc_ip":str(cloud.gateway_ips[name]),"management_ip":str(cloud.gateway_management_ips[name]),"address_id":cloud.gateway_address_ids[name]} for name in cloud.gateway_names]
+
+    def cloud_gateway(self, gateway: str) -> dict[str, Any]:
+        cloud=self.topology.cloud_vpc
+        if gateway not in cloud.gateway_names:
+            return {"available":False,"reason":"unknown cloud gateway"}
+        transits=[]
+        for hub in self.topology.hubs:
+            network=cloud.transit_network(hub,gateway)
+            transits.append({"hub":hub,"network":str(network),"hub_ip":str(cloud.transit_ip(hub,gateway,hub)),"gateway_ip":str(cloud.transit_ip(hub,gateway,gateway))})
+        return {"available":True,"gateway":gateway,"enabled":cloud.enabled,"active":gateway in cloud.active_gateways,"vpc_ip":str(cloud.gateway_ips[gateway]),"management_ip":str(cloud.gateway_management_ips[gateway]),"address_id":cloud.gateway_address_ids[gateway],"vpc_network":str(cloud.network),"application":{"name":cloud.app_name,"ip":str(cloud.app_ip)},"transits":transits}
+
+    def data_center_configuration(self) -> dict[str, Any]:
+        return {"network":str(self.topology.data_center_network),"application":{"name":self.topology.data_center_app_name,"ip":str(self.topology.data_center_app_ip)},"hub_ips":{hub:str(address) for hub,address in self.topology.data_center_hub_ips.items()}}
+
+    def saas_configuration(self) -> dict[str, Any]:
+        return {"network":str(self.topology.saas_network),"application":{"name":self.topology.saas_app_name,"ip":str(self.topology.saas_ip)},"transport_ips":{transport:str(address) for transport,address in self.topology.saas_transport_ips.items()}}
+
+    def site_interfaces(self, site: str) -> dict[str, Any]:
+        return {"site":site,"interfaces":self.runtime.links(site)}
+
+    def site_failover(self, site: str) -> dict[str, Any]:
+        result=self.runtime.failover(site)
+        if result.get("availability") != "AVAILABLE": return {"site":site,"failover":result}
+        import json
+        try: value=json.loads(str(result.get("value", "")))
+        except ValueError: value={"raw_status":str(result.get("value", ""))}
+        return {"site":site,"failover":{"availability":"AVAILABLE","value":value}}
+
+    def site_classifier(self, site: str) -> dict[str, Any]:
+        result=self.runtime.classifier(site)
+        if result.get("availability") != "AVAILABLE": return {"site":site,"classifier":result}
+        import json
+        lines=[line for line in str(result.get("value", "")).splitlines() if line.strip()]
+        try: value=json.loads(lines[-1]) if lines else None
+        except ValueError: value=None
+        return {"site":site,"classifier":{"availability":"AVAILABLE","latest_event":value,"line_count":len(lines)}}
+
     def topology_nodes(self) -> list[dict[str, Any]]:
         plan=build_live_plan(self.topology)
         return ([{"name":item.name,"kind":"switch","openflow":item.openflow,"dpid":item.dpid} for item in plan.switches] + [{"name":item.name,"kind":"docker","role":item.role,"image":item.image} for item in plan.docker_nodes])

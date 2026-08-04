@@ -128,6 +128,94 @@ def build_server(config: ManagementConfig, principal: Principal) -> FastMCP:
         _require(principal, "audit:read")
         return _tool_result(service, principal, "get_recent_events", {"events": service.combined_events()}, "audit_log", StateKind.observed)
 
+    @mcp.tool(description="Return read-only system health and source availability. Use for management API, topology, policy database, or ZTP database availability. Takes no input.")
+    def get_system_health() -> OperationalResult:
+        _require(principal, "network:read")
+        return _tool_result(service, principal, "get_system_health", service.health(), "management", StateKind.observed)
+
+    @mcp.tool(description="Return the configured physical topology node inventory, including node name, kind, role, image, OpenFlow status, and DPID when defined. Use for topology inventory, not live process health. Takes no input.")
+    def get_topology_nodes() -> OperationalResult:
+        _require(principal, "network:read")
+        return _tool_result(service, principal, "get_topology_nodes", {"nodes":service.topology_nodes()}, "configuration", StateKind.configured)
+
+    @mcp.tool(description="Return configured physical topology links and their named interfaces, addresses, and transport when defined. Use for topology link inventory, not a live link-state probe. Takes no input.")
+    def get_topology_links() -> OperationalResult:
+        _require(principal, "network:read")
+        return _tool_result(service, principal, "get_topology_links", {"links":service.topology_links()}, "configuration", StateKind.configured)
+
+    @mcp.tool(description="Return configured transport inventory: networks, switches, bandwidth, delay, direct-internet capability, and route-table IDs. Use for MPLS, broadband, or LTE configuration questions. Takes no input.")
+    def get_transport_inventory() -> OperationalResult:
+        _require(principal, "network:read")
+        return _tool_result(service, principal, "get_transport_inventory", {"transports":service.transport_inventory()}, "configuration", StateKind.configured)
+
+    @mcp.tool(description="Return compact configured information for one hub: its name, management IP address, and address ID. Use for a hub IP or identity question; use get_hub_status only when runtime information is requested.")
+    def get_hub_configuration(hub: Annotated[str, Field(min_length=1, max_length=64, description="Configured hub identifier")]) -> OperationalResult:
+        _require(principal, "network:read"); _hub(service, hub)
+        return _tool_result(service, principal, "get_hub_configuration", service.hub_configuration(hub), "configuration", StateKind.configured)
+
+    @mcp.tool(description="List configured Cloud VPC gateways with their VPC IP address, management IP address, address ID, and configured active flag. Use to discover cloud gateway identifiers. Takes no input.")
+    def list_cloud_gateways() -> OperationalResult:
+        _require(principal, "network:read")
+        return _tool_result(service, principal, "list_cloud_gateways", {"gateways":service.cloud_gateways()}, "configuration", StateKind.configured)
+
+    @mcp.tool(description="Return one configured Cloud VPC gateway's VPC IP, management IP, active and enabled flags, Cloud VPC application address, and dedicated hub transit networks. Use for questions such as the IP address of cloud_gw1. This is configuration evidence, not runtime reachability.")
+    def get_cloud_gateway(gateway: Annotated[str, Field(min_length=1, max_length=64, description="Configured Cloud VPC gateway identifier, for example cloud_gw1")]) -> OperationalResult:
+        _require(principal, "network:read")
+        data=service.cloud_gateway(gateway)
+        if not data.get("available"):
+            raise ValueError("UNKNOWN_CLOUD_GATEWAY: use list_cloud_gateways")
+        return _tool_result(service, principal, "get_cloud_gateway", data, "configuration", StateKind.configured)
+
+    @mcp.tool(description="Return configured data-center network, application name and IP address, and hub addresses. Use for data-center configuration questions. Takes no input.")
+    def get_data_center_configuration() -> OperationalResult:
+        _require(principal, "network:read")
+        return _tool_result(service, principal, "get_data_center_configuration", service.data_center_configuration(), "configuration", StateKind.configured)
+
+    @mcp.tool(description="Return configured SaaS network, application name and IP address, and transport gateway addresses. Use for SaaS configuration questions. This is not a live reachability probe. Takes no input.")
+    def get_saas_configuration() -> OperationalResult:
+        _require(principal, "network:read")
+        return _tool_result(service, principal, "get_saas_configuration", service.saas_configuration(), "configuration", StateKind.configured)
+
+    @mcp.tool(description="Return configured route-ownership records for all spoke prefixes, including preferred and standby hubs, current owner, epochs, route versions, state, and reason. Use for ownership or failover-control-plane questions. Takes no input.")
+    def get_route_ownership() -> OperationalResult:
+        _require(principal, "network:read")
+        return _tool_result(service, principal, "get_route_ownership", {"ownership":service.ownership()}, "database", StateKind.desired)
+
+    @mcp.tool(description="Return desired-state versions for one configured site, including digest, route version, delivery, applied, and verification status. Use for desired-state delivery questions, not runtime route selection.")
+    def get_site_desired_state(site: Annotated[str, Field(min_length=1, max_length=64, description="Configured site identifier")]) -> OperationalResult:
+        _require(principal, "network:read"); _site(service, site)
+        return _tool_result(service, principal, "get_site_desired_state", {"site":site,"desired_states":service.desired(site)}, "database", StateKind.desired)
+
+    @mcp.tool(description="Return read-only policy-version history. Use for policy version, digest, creator, and creation-time questions. Takes no input.")
+    def list_policy_versions() -> OperationalResult:
+        _require(principal, "network:read")
+        return _tool_result(service, principal, "list_policy_versions", {"policy_versions":service.policy_versions()}, "database", StateKind.desired)
+
+    @mcp.tool(description="Return the currently activated destination-policy version and its metadata. Use for the active destination policy, not for a specific packet's route selection. Takes no input.")
+    def get_destination_policy() -> OperationalResult:
+        _require(principal, "network:read")
+        return _tool_result(service, principal, "get_destination_policy", {"destination_policy":service.destination_policy()}, "database", StateKind.desired)
+
+    @mcp.tool(description="Return enrolled ZTP device records with assigned site, enrollment status, public-key fingerprint, and timestamps. Use for enrollment inventory; it never returns private key material. Takes no input.")
+    def list_ztp_devices() -> OperationalResult:
+        _require(principal, "network:read")
+        return _tool_result(service, principal, "list_ztp_devices", {"devices":service.ztp_devices()}, "database", StateKind.configured)
+
+    @mcp.tool(description="Return observed network-interface records for one configured site through the constrained runtime adapter. Use for live interface presence and attributes, not routes or tunnels.")
+    def get_site_interfaces(site: Annotated[str, Field(min_length=1, max_length=64, description="Configured site identifier")]) -> OperationalResult:
+        _require(principal, "network:read"); _site(service, site)
+        return _tool_result(service, principal, "get_site_interfaces", service.site_interfaces(site), "linux_namespace", StateKind.observed)
+
+    @mcp.tool(description="Return observed failover runtime status for one configured site. Use for current failover state and slot health; it does not change failover state.")
+    def get_site_failover_status(site: Annotated[str, Field(min_length=1, max_length=64, description="Configured site identifier")]) -> OperationalResult:
+        _require(principal, "network:read"); _site(service, site)
+        return _tool_result(service, principal, "get_site_failover_status", service.site_failover(site), "runtime_command", StateKind.observed)
+
+    @mcp.tool(description="Return the latest observed classifier event summary for one configured site. Use for classifier counters and latest event metadata; packet content is not exposed.")
+    def get_site_classifier_status(site: Annotated[str, Field(min_length=1, max_length=64, description="Configured site identifier")]) -> OperationalResult:
+        _require(principal, "network:read"); _site(service, site)
+        return _tool_result(service, principal, "get_site_classifier_status", service.site_classifier(site), "runtime_command", StateKind.observed)
+
     return mcp
 
 def main() -> int:

@@ -68,6 +68,16 @@ class ManagementTests(unittest.TestCase):
         self.assertNotIn('routes', status)
         self.assertNotIn('tunnels', status)
 
+    def test_cloud_gateway_configuration_is_not_a_site_lookup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = ManagementConfig(ROOT/'config/topology.yaml', Path(directory)/'policy.db', Path(directory)/'ztp.db', Path(directory), 'test-secret', '', '')
+            gateway = ManagementService(config).cloud_gateway('cloud_gw1')
+        self.assertTrue(gateway['available'])
+        self.assertEqual(gateway['gateway'], 'cloud_gw1')
+        self.assertEqual(gateway['vpc_ip'], '10.200.0.1')
+        self.assertEqual(gateway['management_ip'], '172.30.0.21')
+        self.assertEqual(len(gateway['transits']), 2)
+
     def test_no_http_mcp_endpoint_and_session_ownership(self):
         with tempfile.TemporaryDirectory() as directory:
             client=self.app(directory); viewer={'Authorization':'Bearer '+self.token(client,'viewer')}; admin={'Authorization':'Bearer '+self.token(client,'admin')}

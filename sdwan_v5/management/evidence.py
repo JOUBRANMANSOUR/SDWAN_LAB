@@ -14,11 +14,18 @@ class EvidenceValidator:
         facts={str(item.get("fact_id")):item for item in bundle["payload"].get("facts",[]) if item.get("fact_id")}
         errors=[]; accepted=[]
         compatible = {
+            "system_health": {"status", "mode", "sources"},
+            "topology": {"management_network", "hubs", "sites", "transports", "nodes", "links", "cloud_vpc", "data_center", "saas"},
+            "transport": {"transports"},
             "site_status": {"sites", "site", "lan_prefix", "preferred_hub", "standby_hub", "status", "configured", "desired", "runtime", "links", "tunnels", "routes", "rules", "failover", "classifier"},
-            "tunnel_status": {"tunnels"}, "routing_rule": {"routing_rules", "matched_rule"},
-            "routing_table": {"selected_routing_table", "route_groups"}, "route": {"matched_route", "routes", "route_groups"},
+            "hub_status": {"hub", "management_ip", "address_id", "configured", "runtime"},
+            "cloud_gateway": {"gateway", "enabled", "active", "vpc_ip", "management_ip", "address_id", "vpc_network", "application", "transits", "gateways"},
+            "data_center": {"network", "application", "hub_ips"}, "saas": {"network", "application", "transport_ips"},
+            "tunnel_status": {"tunnels"}, "runtime_interfaces": {"interfaces"}, "failover_status": {"failover"}, "classifier_status": {"classifier"},
+            "routing_rule": {"routing_rules", "matched_rule"}, "routing_table": {"selected_routing_table", "route_groups"}, "route": {"matched_route", "routes", "route_groups"},
             "next_hop": {"next_hop", "matched_route"}, "output_interface": {"output_interface", "matched_route", "route_groups"},
-            "selected_hub": {"derived"}, "selected_transport": {"derived"},
+            "selected_hub": {"derived"}, "selected_transport": {"derived"}, "route_ownership": {"ownership"}, "desired_state": {"desired_states"},
+            "policy_version": {"policy_versions"}, "destination_policy": {"destination_policy"}, "device_enrollment": {"devices"},
             "state_comparison": {"comparisons"}, "event": {"events"}, "limitation": {"limitations"},
         }
         if answer.answer_type in (AnswerType.operational, AnswerType.mixed) and not answer.claims:

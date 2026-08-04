@@ -21,3 +21,16 @@ schemas. Each successful result is an `OperationalResult` with `meta`, `facts`, 
 
 Unavailable values use `null` plus `unknowns`, not empty strings. Lists are bounded
 before serialization; `truncated`, counts, and `next_cursor` communicate limits.
+
+
+## Expanded read-only inventory
+
+The stdio server also exposes domain-specific evidence tools rather than treating every node as a site:
+
+- `get_system_health`, `get_topology_nodes`, `get_topology_links`, and `get_transport_inventory`;
+- `get_hub_configuration`, `list_cloud_gateways`, and `get_cloud_gateway`;
+- `get_data_center_configuration` and `get_saas_configuration`;
+- `get_route_ownership`, `get_site_desired_state`, `list_policy_versions`, `get_destination_policy`, and `list_ztp_devices`;
+- `get_site_interfaces`, `get_site_failover_status`, and `get_site_classifier_status`.
+
+Every tool remains local stdio-only, constrained to read-only data sources, and returns a provenance-tagged `OperationalResult`. A Cloud VPC gateway is queried by its gateway identifier (for example `cloud_gw1`), not through the site inventory.

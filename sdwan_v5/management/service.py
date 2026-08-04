@@ -40,6 +40,27 @@ class ManagementService:
     def dashboard(self) -> dict[str, Any]:
         return {"health":self.health(),"topology":self.topology_view(),"sites":self.sites(),"desired":self.desired_summary(),"ownership":self.ownership(),"devices":self.ztp_devices(),"destination_policy":self.destination_policy()}
 
+    def route_summary(self, site: str) -> dict[str, Any]:
+        """Bounded evidence view: exclude local, broadcast, and IPv6 noise."""
+        if site not in self.topology.site_names: return {"available":False,"reason":"unknown site"}
+        routes=self.runtime.routes(site); rules=self.runtime.rules(site)
+        if routes.get("availability") != "AVAILABLE": return {"available":False,"reason":routes.get("reason","runtime routes unavailable")}
+        selected=[]
+        for route in routes.get("value",[]):
+            dev=str(route.get("dev", "")); table=str(route.get("table", "")); dst=str(route.get("dst", "default"))
+            if not (dev.startswith("wg-") or table.startswith("11") or table.startswith("12")): continue
+            if ":" in dst or route.get("type") in ("local","broadcast","multicast"): continue
+            bits=dev.split("-"); hub=("hub"+bits[1][1:]) if len(bits) >= 3 and bits[1].startswith("h") else None
+            transport=bits[2] if len(bits) >= 3 else None
+            selected.append({"destination":dst,"table":table,"fwmark_table":table,"next_hop":route.get("gateway"),"output_interface":dev,"hub":hub,"transport":transport,"protocol":route.get("protocol"),"scope":route.get("scope")})
+        selected.sort(key=lambda item:(str(item["table"]),str(item["destination"])))
+        policy_rules=[]
+        if rules.get("availability") == "AVAILABLE":
+            for rule in rules.get("value",[]):
+                if rule.get("fwmark") is not None or str(rule.get("table","")).startswith(("11","12")):
+                    policy_rules.append({key:rule.get(key) for key in ("priority","fwmark","fwmask","table","src","dst") if rule.get(key) is not None})
+        return {"available":True,"site":site,"routes":selected[:256],"routing_rules":policy_rules[:128],"return_affinity":{"configuration":"connmark-based; routes are selected by persistent connection mark and policy rule","evidence":"inspect the listed fwmark policy rules and selected WireGuard output interface"}}
+
     def hub_view(self, hub: str) -> dict[str, Any]:
         if hub not in self.topology.hubs: return {"availability":"UNAVAILABLE", "reason":"unknown hub"}
         return {"hub":hub,"configured":{"management_ip":str(self.topology.hubs[hub].management_ip)},"runtime":self.runtime_view(hub)}

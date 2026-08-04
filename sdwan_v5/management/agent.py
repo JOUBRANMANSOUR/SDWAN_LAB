@@ -42,7 +42,10 @@ class OllamaClaudeRunner:
     async def run(self, prompt: str, session_id: str, principal: Principal) -> AsyncIterator[AgentEvent]:
         token=issue_agent_context(self.config.signing_secret, principal, session_id, self.config.agent_context_audience, self.config.agent_context_ttl_seconds)
         claude_session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "sdwan-v5-web-session:" + session_id))
-        cmd=command_for(self.config, prompt, claude_session_id); env=restricted_environment(self.config, token, session_id)
+        factual_prompt = ("You are a read-only SD-WAN diagnostic assistant. Use only approved SD-WAN MCP tools for current facts. "
+                          "Do not infer, invent, or claim active state that a tool did not return; state unavailable when evidence is absent. "
+                          "Never suggest or perform configuration changes.\n\nUser question: " + prompt)
+        cmd=command_for(self.config, factual_prompt, claude_session_id); env=restricted_environment(self.config, token, session_id)
         if not self.config.mcp_config.is_file() or not self.config.claude_settings.is_file():
             yield AgentEvent("agent_error", {"reason":"agent configuration is unavailable"}); return
         try:

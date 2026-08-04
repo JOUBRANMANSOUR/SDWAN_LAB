@@ -167,17 +167,12 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
         bundle_id = uuid.uuid4().hex
         service.audit.create_evidence_bundle(bundle_id, session_id, message_id, user.subject)
         async def execute():
-            final_text=""; await queue.put({"type":"session_started","data":{"session_id":session_id,"message_id":message_id}})
-            await queue.put({"type":"evidence_bundle_created","data":{"bundle_id":bundle_id,"message_id":message_id}})
-            await queue.put({"type":"agent_starting","data":{}})
-            try:
-                async for event in runner.run(prompt,str(session_id),user,str(message_id),bundle_id):
-                    await queue.put({"type":event.type,"data":event.data})
-                    if event.type=="agent_final": final_text=str(event.data.get("text",""))
+            final_text=""; finalized=False
+            async def validate_final(text: str):
                 await queue.put({"type":"answer_validation_started","data":{"bundle_id":bundle_id}})
                 bundle=service.audit.evidence_bundle(bundle_id,session_id,user.subject)
                 try:
-                    candidate=final_text.strip()
+                    candidate=text.strip()
                     if candidate.startswith("```"):
                         candidate=candidate.split("\n",1)[-1].rsplit("```",1)[0].strip()
                     parsed=json.loads(candidate)
@@ -197,6 +192,18 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
                     await queue.put({"type":"answer_validation_failed","data":{"bundle_id":bundle_id,"errors":outcome.get("errors",[])}})
                     await queue.put({"type":"verified_answer","data":{"bundle_id":bundle_id,"markdown":fallback}})
                     service.audit.add(user.subject,"CHAT",str(session_id),"unavailable","evidence validation failed")
+            await queue.put({"type":"session_started","data":{"session_id":session_id,"message_id":message_id}})
+            await queue.put({"type":"evidence_bundle_created","data":{"bundle_id":bundle_id,"message_id":message_id}})
+            await queue.put({"type":"agent_starting","data":{}})
+            try:
+                async for event in runner.run(prompt,str(session_id),user,str(message_id),bundle_id):
+                    await queue.put({"type":event.type,"data":event.data})
+                    if event.type=="agent_final" and not finalized:
+                        final_text=str(event.data.get("text",""))
+                        await validate_final(final_text)
+                        finalized=True
+                if not finalized:
+                    await validate_final(final_text)
             except Exception:
                 await queue.put({"type":"agent_error","data":{"reason":"agent gateway failed"}})
             finally:

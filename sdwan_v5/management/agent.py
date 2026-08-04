@@ -59,7 +59,7 @@ class OllamaClaudeRunner:
             proc=await asyncio.create_subprocess_exec(*cmd, cwd=str(self.config.project_root), env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         except (OSError, ValueError):
             yield AgentEvent("agent_error", {"reason":"agent runtime is unavailable"}); return
-        collected=0; saw_text=False; final_text=""
+        collected=0; saw_text=False; final_text=""; final_emitted=False
         try:
             while True:
                 line=await asyncio.wait_for(proc.stdout.readline(), timeout=self.config.claude_timeout_seconds)
@@ -74,6 +74,9 @@ class OllamaClaudeRunner:
                     final_text="".join(str(part.get("text", "")) for part in content if isinstance(part, dict) and part.get("type") == "text")
                 elif raw.get("type") == "result":
                     final_text=str(raw.get("result", final_text))
+                    if final_text:
+                        final_emitted=True
+                        yield AgentEvent("agent_final", {"text":final_text[:16384]})
                 event = normalized_event(raw)
                 if event.type == "assistant_delta": saw_text=True
                 if event.type != "ignore": yield event
@@ -82,7 +85,7 @@ class OllamaClaudeRunner:
             if len(stderr) > self.config.claude_max_output_bytes or code != 0: yield AgentEvent("agent_error", {"reason":"agent process did not complete successfully", "exit_code":code})
             else:
                 self._started_sessions.add(claude_session_id)
-                if final_text:
+                if final_text and not final_emitted:
                     yield AgentEvent("agent_final", {"text":final_text[:16384]})
                 yield AgentEvent("agent_completed", {"session_id":session_id})
         except (asyncio.TimeoutError, RuntimeError):

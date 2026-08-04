@@ -134,10 +134,13 @@ def _render_fact(fact: Dict[str, Any]) -> List[str]:
         return ["### Installed policy rules"] + _routing_rules_table(value)
     if kind == "tunnels":
         return ["### Observed WireGuard tunnels"] + _wireguard_tunnels_table(value)
+    if kind in {"source", "destination"}:
+        title = "Resolved source endpoint" if kind == "source" else "Resolved destination endpoint"
+        return ["### " + title] + _key_value_table(value, [("name", "Name"), ("kind", "Kind"), ("ip", "IP address"), ("site", "Site"), ("management_ip", "Management IP")])
     if kind == "host_access":
         return ["### Configured host access"] + _key_value_table(value, [("source_host", "Source host"), ("source_ip", "Source IP"), ("edge_site", "Edge site"), ("lan_gateway", "LAN gateway"), ("lan_network", "LAN network")])
     if kind == "edge_route":
-        return ["### Observed edge route lookup"] + _key_value_table(value, [("site", "Edge site"), ("destination", "Destination"), ("source", "Source"), ("packet_mark", "Supplied fwmark"), ("selected_routing_table", "Selected table"), ("next_hop", "Next hop"), ("output_interface", "Output interface"), ("derived", "Derived interface metadata")])
+        return ["### Observed edge route lookup"] + _key_value_table(value, [("available", "Lookup availability"), ("reason", "Lookup result"), ("site", "Edge site"), ("destination", "Destination"), ("source", "Source"), ("packet_mark", "Supplied fwmark"), ("selected_routing_table", "Selected table"), ("next_hop", "Next hop"), ("output_interface", "Output interface"), ("derived", "Derived interface metadata")])
     return ["- **{}**: `{}`".format(kind, json.dumps(value, sort_keys=True, default=str))]
 
 def render_verified_answer(validation: Dict[str, Any], bundle: Dict[str, Any]) -> str:

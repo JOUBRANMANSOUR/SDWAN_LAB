@@ -58,6 +58,22 @@ peer: peer-value
         self.assertIn("Observed edge route lookup", rendered)
         self.assertNotIn("ignored", rendered)
 
+    def test_endpoint_route_unavailable_lookup_is_rendered_without_a_route_claim(self):
+        bundle={"bundle_id":"bundle-unavailable-path","payload":{"facts":[
+            {"fact_id":"source","fact_kind":"source","value":{"name":"node1_host","kind":"branch_host","ip":"10.1.0.10","site":"node1"}},
+            {"fact_id":"destination","fact_kind":"destination","value":{"name":"dc_app","kind":"data_center_application","ip":"10.100.0.10"}},
+            {"fact_id":"access","fact_kind":"host_access","value":{"source_host":"node1_host","source_ip":"10.1.0.10","edge_site":"node1","lan_gateway":"10.1.0.1","lan_network":"10.1.0.0/24"}},
+            {"fact_id":"route","fact_kind":"edge_route","value":{"available":False,"reason":"RTNETLINK answers: Network is unreachable"}}
+        ],"unknowns":[],"limitations":[]}}
+        answer={"answer_type":"operational","summary":"ignored","claims":[{"claim_id":"path","claim_type":"endpoint_route","fact_ids":["source","destination","access","route"],"explanation":None}],"unknowns":[],"limitations":[]}
+        result=self.validator.validate(answer,bundle)
+        self.assertTrue(result["valid"])
+        rendered=render_verified_answer(result,bundle)
+        self.assertIn("Resolved source endpoint", rendered)
+        self.assertIn("Lookup availability", rendered)
+        self.assertIn("RTNETLINK answers: Network is unreachable", rendered)
+        self.assertNotIn("ignored", rendered)
+
     def test_unknown_fact_and_wrong_kind_are_rejected(self):
         unknown={"answer_type":"operational","summary":"x","claims":[{"claim_id":"c","claim_type":"route","fact_ids":["missing"],"explanation":None}],"unknowns":[],"limitations":[]}
         self.assertFalse(self.validator.validate(unknown,BUNDLE)["valid"])

@@ -54,12 +54,20 @@ class ManagementService:
             transport=bits[2] if len(bits) >= 3 else None
             selected.append({"destination":dst,"table":table,"fwmark_table":table,"next_hop":route.get("gateway"),"output_interface":dev,"hub":hub,"transport":transport,"protocol":route.get("protocol"),"scope":route.get("scope")})
         selected.sort(key=lambda item:(str(item["table"]),str(item["destination"])))
+        grouped={}
+        for route in selected:
+            key=(route["table"], route["output_interface"])
+            group=grouped.setdefault(key,{key:value for key,value in route.items() if key not in ("destination","protocol","scope")})
+            group.setdefault("destinations",[]).append(route["destination"])
+            if route.get("protocol") is not None: group["protocol"]=route["protocol"]
+            if route.get("scope") is not None: group["scope"]=route["scope"]
+        route_groups=list(grouped.values())[:64]
         policy_rules=[]
         if rules.get("availability") == "AVAILABLE":
             for rule in rules.get("value",[]):
                 if rule.get("fwmark") is not None or str(rule.get("table","")).startswith(("11","12")):
                     policy_rules.append({key:rule.get(key) for key in ("priority","fwmark","fwmask","table","src","dst") if rule.get(key) is not None})
-        return {"available":True,"site":site,"routes":selected[:256],"routing_rules":policy_rules[:128],"return_affinity":{"configuration":"connmark-based; routes are selected by persistent connection mark and policy rule","evidence":"inspect the listed fwmark policy rules and selected WireGuard output interface"}}
+        return {"available":True,"site":site,"route_groups":route_groups,"routing_rules":policy_rules[:128],"return_affinity":{"configuration":"connmark-based; routes are selected by persistent connection mark and policy rule","evidence":"inspect the listed fwmark policy rules and selected WireGuard output interface"}}
 
     def hub_view(self, hub: str) -> dict[str, Any]:
         if hub not in self.topology.hubs: return {"availability":"UNAVAILABLE", "reason":"unknown hub"}

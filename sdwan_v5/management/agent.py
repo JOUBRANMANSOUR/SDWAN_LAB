@@ -76,6 +76,9 @@ class OllamaClaudeRunner:
                 if raw.get("type") == "assistant":
                     message=raw.get("message", {}); content=message.get("content", []) if isinstance(message, dict) else []
                     final_text="".join(str(part.get("text", "")) for part in content if isinstance(part, dict) and part.get("type") == "text")
+                    if final_text:
+                        final_emitted=True
+                        yield AgentEvent("agent_final", {"text":final_text[:16384]})
                 elif raw.get("type") == "result":
                     final_text=str(raw.get("result", final_text))
                     if final_text:

@@ -157,6 +157,52 @@ class ManagementService:
         if kind == "cloud-vpc": return {"enabled":c.cloud_vpc.enabled,"network":str(c.cloud_vpc.network),"endpoint":str(c.cloud_vpc.app_ip),"gateways":list(c.cloud_vpc.active_gateways),"availability":"CONFIGURED" if c.cloud_vpc.enabled else "DISABLED"}
         return {"availability":"UNAVAILABLE", "reason":"unknown network view"}
 
+    @staticmethod
+    def _endpoint_key(value: str) -> str:
+        return "".join(character for character in value.lower() if character.isalnum())
+
+    def endpoint_inventory(self) -> list[dict[str, Any]]:
+        endpoints=[]
+        for site in self.topology.sites.values():
+            number="".join(character for character in site.name if character.isdigit())
+            endpoints.append({"name":site.host_name,"kind":"branch_host","ip":str(site.host_ip),"site":site.name,"aliases":[site.host_name,site.name+"-host","node_host"+number]})
+            endpoints.append({"name":site.name,"kind":"branch_edge","ip":str(site.lan_gateway),"site":site.name,"aliases":[site.name]})
+        for hub in self.topology.hubs.values():
+            endpoints.append({"name":hub.name,"kind":"hub","ip":str(hub.management_ip),"aliases":[hub.name]})
+        endpoints.extend([
+            {"name":self.topology.data_center_app_name,"kind":"data_center_application","ip":str(self.topology.data_center_app_ip),"aliases":[self.topology.data_center_app_name,"data_center","data-center","dc"]},
+            {"name":self.topology.saas_app_name,"kind":"saas_application","ip":str(self.topology.saas_ip),"aliases":[self.topology.saas_app_name,"saas"]},
+            {"name":self.topology.cloud_vpc.app_name,"kind":"cloud_application","ip":str(self.topology.cloud_vpc.app_ip),"aliases":[self.topology.cloud_vpc.app_name,"cloud_app","cloud"]},
+        ])
+        for gateway in self.topology.cloud_vpc.gateway_names:
+            endpoints.append({"name":gateway,"kind":"cloud_gateway","ip":str(self.topology.cloud_vpc.gateway_ips[gateway]),"management_ip":str(self.topology.cloud_vpc.gateway_management_ips[gateway]),"aliases":[gateway]})
+        return endpoints
+
+    def resolve_endpoint(self, value: str) -> dict[str, Any] | None:
+        key=self._endpoint_key(value)
+        for endpoint in self.endpoint_inventory():
+            if key in {self._endpoint_key(alias) for alias in endpoint["aliases"]}:
+                return endpoint
+        return None
+
+    def endpoint_route(self, source: str, destination: str, fwmark: int | None = None) -> dict[str, Any]:
+        source_endpoint=self.resolve_endpoint(source)
+        destination_endpoint=self.resolve_endpoint(destination)
+        if source_endpoint is None or destination_endpoint is None:
+            missing=[]
+            if source_endpoint is None: missing.append("source endpoint")
+            if destination_endpoint is None: missing.append("destination endpoint")
+            return {"available":False,"reason":"unresolved " + " and ".join(missing),"source":source,"destination":destination}
+        result={"available":True,"source":source_endpoint,"destination":destination_endpoint,"fwmark":fwmark}
+        if source_endpoint["kind"] == "branch_host":
+            site=self.topology.sites[source_endpoint["site"]]
+            result["host_access"]={"source_host":source_endpoint["name"],"source_ip":source_endpoint["ip"],"edge_site":site.name,"lan_gateway":str(site.lan_gateway),"lan_network":str(site.lan_network)}
+            result["edge_route"]=self.route_decision_report(site.name,destination_endpoint["ip"],source_endpoint["ip"],fwmark)
+            result["limitations"]=["The host-to-LAN-gateway hop is configured topology evidence. The edge route lookup reflects the supplied destination, source, and optional fwmark."]
+            return result
+        result["limitations"]=["The source resolves to a configured endpoint, but this tool currently performs an observed edge route lookup only for a branch host source."]
+        return result
+
     def transport_inventory(self) -> list[dict[str, Any]]:
         return [{"name":item.name,"network":str(item.network),"switch":item.switch,"dpid":item.dpid,"bandwidth_mbps":item.bandwidth_mbps,"delay_ms":item.delay_ms,"internet_capable":item.internet_capable,"route_table":item.route_table} for item in self.topology.transports.values()]
 

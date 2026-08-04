@@ -143,6 +143,19 @@ def build_server(config: ManagementConfig, principal: Principal) -> FastMCP:
         _require(principal, "network:read")
         return _tool_result(service, principal, "get_topology_links", {"links":service.topology_links()}, "configuration", StateKind.configured)
 
+    @mcp.tool(description="Return the configured endpoint inventory and documented aliases for branch hosts and edges, hubs, data center, SaaS, Cloud VPC application, and Cloud VPC gateways. Use to discover which names can be resolved by explain_endpoint_route. Takes no input.")
+    def get_endpoint_inventory() -> OperationalResult:
+        _require(principal, "network:read")
+        return _tool_result(service, principal, "get_endpoint_inventory", {"endpoints":service.endpoint_inventory()}, "configuration", StateKind.configured)
+
+    @mcp.tool(description="Resolve configured endpoint names or aliases and report a read-only host-to-destination path. For a branch host source, reports the configured host-to-LAN-gateway hop and performs an observed route lookup from its edge site. Accepts aliases such as node1_host and node_host1, plus data_center, dc, saas, cloud_app, and cloud_gw1. The optional fwmark is used only for the edge route lookup; without it, the tool does not claim a particular policy-rule selection.")
+    def explain_endpoint_route(source: Annotated[str, Field(min_length=1, max_length=64, description="Configured endpoint name or documented alias, for example node1_host or node_host1")], destination: Annotated[str, Field(min_length=1, max_length=64, description="Configured endpoint name or documented alias, for example data_center or cloud_gw1")], fwmark: Optional[int] = Field(default=None, ge=0)) -> OperationalResult:
+        _require(principal, "network:read")
+        data=service.endpoint_route(source,destination,fwmark)
+        if not data.get("available"):
+            raise ValueError("UNKNOWN_ENDPOINT: {}".format(data.get("reason", "use get_endpoint_inventory")))
+        return _tool_result(service, principal, "explain_endpoint_route", data, "derived", StateKind.derived)
+
     @mcp.tool(description="Return configured transport inventory: networks, switches, bandwidth, delay, direct-internet capability, and route-table IDs. Use for MPLS, broadband, or LTE configuration questions. Takes no input.")
     def get_transport_inventory() -> OperationalResult:
         _require(principal, "network:read")

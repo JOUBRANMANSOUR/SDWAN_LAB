@@ -78,6 +78,21 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(gateway['management_ip'], '172.30.0.21')
         self.assertEqual(len(gateway['transits']), 2)
 
+    def test_endpoint_route_resolves_host_and_data_center_aliases(self):
+        class Runtime:
+            def route_lookup(self, site, destination, source=None, fwmark=None):
+                return {"availability":"AVAILABLE","value":[{"dst":destination,"table":1101,"dev":"wg-h1-mpls"}]}
+            def rules(self, site): return {"availability":"AVAILABLE","value":[]}
+        with tempfile.TemporaryDirectory() as directory:
+            config = ManagementConfig(ROOT/'config/topology.yaml', Path(directory)/'policy.db', Path(directory)/'ztp.db', Path(directory), 'test-secret', '', '')
+            service = ManagementService(config); service.runtime = Runtime()
+            report = service.endpoint_route('node_host1', 'data center')
+        self.assertTrue(report['available'])
+        self.assertEqual(report['source']['name'], 'node1_host')
+        self.assertEqual(report['destination']['ip'], '10.100.0.10')
+        self.assertEqual(report['host_access']['lan_gateway'], '10.1.0.1')
+        self.assertEqual(report['edge_route']['output_interface'], 'wg-h1-mpls')
+
     def test_no_http_mcp_endpoint_and_session_ownership(self):
         with tempfile.TemporaryDirectory() as directory:
             client=self.app(directory); viewer={'Authorization':'Bearer '+self.token(client,'viewer')}; admin={'Authorization':'Bearer '+self.token(client,'admin')}

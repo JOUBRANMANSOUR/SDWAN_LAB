@@ -16,13 +16,14 @@ class EvidenceValidator:
         compatible = {
             "system_health": {"status", "mode", "sources"},
             "topology": {"management_network", "hubs", "sites", "transports", "nodes", "links", "cloud_vpc", "data_center", "saas"},
+            "endpoint": {"endpoints", "source", "destination"}, "endpoint_route": {"source", "destination", "host_access", "edge_route"},
             "transport": {"transports"},
             "site_status": {"sites", "site", "lan_prefix", "preferred_hub", "standby_hub", "status", "configured", "desired", "runtime", "links", "tunnels", "routes", "rules", "failover", "classifier"},
             "hub_status": {"hub", "management_ip", "address_id", "configured", "runtime"},
             "cloud_gateway": {"gateway", "enabled", "active", "vpc_ip", "management_ip", "address_id", "vpc_network", "application", "transits", "gateways"},
             "data_center": {"network", "application", "hub_ips"}, "saas": {"network", "application", "transport_ips"},
             "tunnel_status": {"tunnels"}, "runtime_interfaces": {"interfaces"}, "failover_status": {"failover"}, "classifier_status": {"classifier"},
-            "routing_rule": {"routing_rules", "matched_rule"}, "routing_table": {"selected_routing_table", "route_groups"}, "route": {"matched_route", "routes", "route_groups"},
+            "routing_rule": {"routing_rules", "matched_rule"}, "routing_table": {"selected_routing_table", "route_groups"}, "route": {"matched_route", "routes", "route_groups", "edge_route"},
             "next_hop": {"next_hop", "matched_route"}, "output_interface": {"output_interface", "matched_route", "route_groups"},
             "selected_hub": {"derived"}, "selected_transport": {"derived"}, "route_ownership": {"ownership"}, "desired_state": {"desired_states"},
             "policy_version": {"policy_versions"}, "destination_policy": {"destination_policy"}, "device_enrollment": {"devices"},
@@ -112,6 +113,18 @@ def _wireguard_tunnels_table(value: Any) -> List[str]:
             _markdown(row.get("keepalive")), _markdown(row.get("allowed_ips"))))
     return lines
 
+def _key_value_table(value: Any, keys: List[tuple[str, str]]) -> List[str]:
+    if not isinstance(value, dict):
+        return ["- `{}`".format(json.dumps(value, sort_keys=True, default=str))]
+    lines=["| Field | Value |", "|---|---|"]
+    for field, label in keys:
+        if field in value:
+            rendered=value[field]
+            if isinstance(rendered, (dict, list)):
+                rendered=json.dumps(rendered, sort_keys=True, default=str)
+            lines.append("| {} | {} |".format(label, _markdown(rendered)))
+    return lines
+
 def _render_fact(fact: Dict[str, Any]) -> List[str]:
     kind=str(fact.get("fact_kind", "evidence"))
     value=fact.get("value")
@@ -121,6 +134,10 @@ def _render_fact(fact: Dict[str, Any]) -> List[str]:
         return ["### Installed policy rules"] + _routing_rules_table(value)
     if kind == "tunnels":
         return ["### Observed WireGuard tunnels"] + _wireguard_tunnels_table(value)
+    if kind == "host_access":
+        return ["### Configured host access"] + _key_value_table(value, [("source_host", "Source host"), ("source_ip", "Source IP"), ("edge_site", "Edge site"), ("lan_gateway", "LAN gateway"), ("lan_network", "LAN network")])
+    if kind == "edge_route":
+        return ["### Observed edge route lookup"] + _key_value_table(value, [("site", "Edge site"), ("destination", "Destination"), ("source", "Source"), ("packet_mark", "Supplied fwmark"), ("selected_routing_table", "Selected table"), ("next_hop", "Next hop"), ("output_interface", "Output interface"), ("derived", "Derived interface metadata")])
     return ["- **{}**: `{}`".format(kind, json.dumps(value, sort_keys=True, default=str))]
 
 def render_verified_answer(validation: Dict[str, Any], bundle: Dict[str, Any]) -> str:

@@ -34,3 +34,8 @@ The stdio server also exposes domain-specific evidence tools rather than treatin
 - `get_site_interfaces`, `get_site_failover_status`, and `get_site_classifier_status`.
 
 Every tool remains local stdio-only, constrained to read-only data sources, and returns a provenance-tagged `OperationalResult`. A Cloud VPC gateway is queried by its gateway identifier (for example `cloud_gw1`), not through the site inventory.
+
+
+## Endpoint-aware path questions
+
+`get_endpoint_inventory` publishes configured endpoint identities and aliases. `explain_endpoint_route` resolves a source and destination alias before answering a host-to-destination path question. For a branch-host source it reports two separately labelled evidence sets: the configured host-to-LAN-gateway access hop, and the observed route lookup performed at the associated edge site. It accepts `node1_host` and `node_host1`, as well as `data_center`/`dc`, `saas`, `cloud_app`, and Cloud gateway names. Supplying no fwmark leaves policy-rule selection unproven rather than inferred.

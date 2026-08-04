@@ -52,7 +52,7 @@ class OllamaClaudeRunner:
             proc=await asyncio.create_subprocess_exec(*cmd, cwd=str(self.config.project_root), env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         except (OSError, ValueError):
             yield AgentEvent("agent_error", {"reason":"agent runtime is unavailable"}); return
-        collected=0
+        collected=0; saw_text=False; final_text=""
         try:
             while True:
                 line=await asyncio.wait_for(proc.stdout.readline(), timeout=self.config.claude_timeout_seconds)
@@ -61,13 +61,21 @@ class OllamaClaudeRunner:
                 if collected > self.config.claude_max_output_bytes: raise RuntimeError("agent output limit exceeded")
                 try: raw=json.loads(line.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError): continue
-                if isinstance(raw, dict):
-                    event = normalized_event(raw)
-                    if event.type != "ignore": yield event
+                if not isinstance(raw, dict): continue
+                if raw.get("type") == "assistant":
+                    message=raw.get("message", {}); content=message.get("content", []) if isinstance(message, dict) else []
+                    final_text="".join(str(part.get("text", "")) for part in content if isinstance(part, dict) and part.get("type") == "text")
+                elif raw.get("type") == "result":
+                    final_text=str(raw.get("result", final_text))
+                event = normalized_event(raw)
+                if event.type == "assistant_delta": saw_text=True
+                if event.type != "ignore": yield event
             stderr=await asyncio.wait_for(proc.stderr.read(self.config.claude_max_output_bytes + 1), timeout=10)
             code=await asyncio.wait_for(proc.wait(), timeout=10)
             if len(stderr) > self.config.claude_max_output_bytes or code != 0: yield AgentEvent("agent_error", {"reason":"agent process did not complete successfully", "exit_code":code})
-            else: yield AgentEvent("agent_completed", {"session_id":session_id})
+            else:
+                if final_text and not saw_text: yield AgentEvent("assistant_delta", {"text":final_text[:8192]})
+                yield AgentEvent("agent_completed", {"session_id":session_id})
         except (asyncio.TimeoutError, RuntimeError):
             proc.terminate()
             try: await asyncio.wait_for(proc.wait(), timeout=5)

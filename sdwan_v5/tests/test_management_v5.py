@@ -78,6 +78,14 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(gateway['management_ip'], '172.30.0.21')
         self.assertEqual(len(gateway['transits']), 2)
 
+    def test_endpoint_resolves_a_single_host_alias(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = ManagementConfig(ROOT/'config/topology.yaml', Path(directory)/'policy.db', Path(directory)/'ztp.db', Path(directory), 'test-secret', '', '')
+            result = ManagementService(config).endpoint('node_host1')
+        self.assertTrue(result['available'])
+        self.assertEqual(result['endpoint']['name'], 'node1_host')
+        self.assertEqual(result['endpoint']['ip'], '10.1.0.10')
+
     def test_endpoint_route_resolves_host_and_data_center_aliases(self):
         class Runtime:
             def route_lookup(self, site, destination, source=None, fwmark=None):

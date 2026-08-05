@@ -148,6 +148,14 @@ def build_server(config: ManagementConfig, principal: Principal) -> FastMCP:
         _require(principal, "network:read")
         return _tool_result(service, principal, "get_endpoint_inventory", {"endpoints":service.endpoint_inventory()}, "configuration", StateKind.configured)
 
+    @mcp.tool(description="Return one compact configured endpoint record by name or documented alias. Use for a direct endpoint IP, type, site, or management-IP question, for example node1_host, node_host1, dc, saas, cloud_app, or cloud_gw1. Do not use get_endpoint_inventory when the requested endpoint name is already known.")
+    def get_endpoint(endpoint: Annotated[str, Field(min_length=1, max_length=64, description="Configured endpoint name or documented alias")]) -> OperationalResult:
+        _require(principal, "network:read")
+        data=service.endpoint(endpoint)
+        if not data.get("available"):
+            raise ValueError("UNKNOWN_ENDPOINT: {}".format(data.get("reason", "use get_endpoint_inventory")))
+        return _tool_result(service, principal, "get_endpoint", data, "configuration", StateKind.configured)
+
     @mcp.tool(description="Resolve configured endpoint names or aliases and report a read-only host-to-destination path. For a branch host source, reports the configured host-to-LAN-gateway hop and performs an observed route lookup from its edge site. Accepts aliases such as node1_host and node_host1, plus data_center, dc, saas, cloud_app, and cloud_gw1. The optional fwmark is used only for the edge route lookup; without it, the tool does not claim a particular policy-rule selection.")
     def explain_endpoint_route(source: Annotated[str, Field(min_length=1, max_length=64, description="Configured endpoint name or documented alias, for example node1_host or node_host1")], destination: Annotated[str, Field(min_length=1, max_length=64, description="Configured endpoint name or documented alias, for example data_center or cloud_gw1")], fwmark: Optional[int] = Field(default=None, ge=0)) -> OperationalResult:
         _require(principal, "network:read")

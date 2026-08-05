@@ -16,7 +16,7 @@ class EvidenceValidator:
         compatible = {
             "system_health": {"status", "mode", "sources"},
             "topology": {"management_network", "hubs", "sites", "transports", "nodes", "links", "cloud_vpc", "data_center", "saas"},
-            "endpoint": {"endpoints", "source", "destination"}, "endpoint_route": {"source", "destination", "host_access", "edge_route"},
+            "endpoint": {"endpoint", "endpoints", "source", "destination"}, "endpoint_route": {"source", "destination", "host_access", "edge_route"},
             "transport": {"transports"},
             "site_status": {"sites", "site", "lan_prefix", "preferred_hub", "standby_hub", "status", "configured", "desired", "runtime", "links", "tunnels", "routes", "rules", "failover", "classifier"},
             "hub_status": {"hub", "management_ip", "address_id", "configured", "runtime"},
@@ -134,9 +134,9 @@ def _render_fact(fact: Dict[str, Any]) -> List[str]:
         return ["### Installed policy rules"] + _routing_rules_table(value)
     if kind == "tunnels":
         return ["### Observed WireGuard tunnels"] + _wireguard_tunnels_table(value)
-    if kind in {"source", "destination"}:
-        title = "Resolved source endpoint" if kind == "source" else "Resolved destination endpoint"
-        return ["### " + title] + _key_value_table(value, [("name", "Name"), ("kind", "Kind"), ("ip", "IP address"), ("site", "Site"), ("management_ip", "Management IP")])
+    if kind in {"endpoint", "source", "destination"}:
+        title = {"endpoint":"Configured endpoint", "source":"Resolved source endpoint", "destination":"Resolved destination endpoint"}[kind]
+        return ["### " + title] + _key_value_table(value, [("name", "Name"), ("kind", "Kind"), ("ip", "IP address"), ("site", "Site"), ("management_ip", "Management IP"), ("aliases", "Aliases")])
     if kind == "host_access":
         return ["### Configured host access"] + _key_value_table(value, [("source_host", "Source host"), ("source_ip", "Source IP"), ("edge_site", "Edge site"), ("lan_gateway", "LAN gateway"), ("lan_network", "LAN network")])
     if kind == "edge_route":

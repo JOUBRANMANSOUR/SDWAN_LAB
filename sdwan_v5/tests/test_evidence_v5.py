@@ -47,6 +47,14 @@ peer: peer-value
         self.assertNotIn("public-value", rendered)
         self.assertNotIn("private key", rendered)
 
+    def test_single_endpoint_fact_renders_as_compact_table(self):
+        bundle={"bundle_id":"bundle-endpoint","payload":{"facts":[{"fact_id":"endpoint","fact_kind":"endpoint","value":{"name":"node1_host","kind":"branch_host","ip":"10.1.0.10","site":"node1","aliases":["node1_host","node_host1"]}}],"unknowns":[],"limitations":[]}}
+        answer={"answer_type":"operational","summary":"ignored","claims":[{"claim_id":"endpoint","claim_type":"endpoint","fact_ids":["endpoint"],"explanation":None}],"unknowns":[],"limitations":[]}
+        rendered=render_verified_answer(self.validator.validate(answer,bundle),bundle)
+        self.assertIn("Configured endpoint", rendered)
+        self.assertIn("10.1.0.10", rendered)
+        self.assertNotIn("ignored", rendered)
+
     def test_endpoint_route_facts_render_configured_and_observed_sections(self):
         bundle={"bundle_id":"bundle-path","payload":{"facts":[
             {"fact_id":"access","fact_kind":"host_access","value":{"source_host":"node1_host","source_ip":"10.1.0.10","edge_site":"node1","lan_gateway":"10.1.0.1","lan_network":"10.1.0.0/24"}},

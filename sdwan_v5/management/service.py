@@ -185,6 +185,12 @@ class ManagementService:
                 return endpoint
         return None
 
+    def endpoint(self, name: str) -> dict[str, Any]:
+        endpoint=self.resolve_endpoint(name)
+        if endpoint is None:
+            return {"available":False,"reason":"unknown configured endpoint"}
+        return {"available":True,"endpoint":endpoint}
+
     def endpoint_route(self, source: str, destination: str, fwmark: int | None = None) -> dict[str, Any]:
         source_endpoint=self.resolve_endpoint(source)
         destination_endpoint=self.resolve_endpoint(destination)

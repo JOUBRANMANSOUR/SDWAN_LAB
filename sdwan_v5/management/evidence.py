@@ -156,7 +156,7 @@ def _render_fact(fact: Dict[str, Any]) -> List[str]:
     if kind == "flow_observation":
         return ["### Observed matching flow"] + _key_value_table(value, [("flow_count", "Observed matching flows"), ("marks", "Observed marks")])
     if kind == "selected_live_route":
-        return ["### Route lookup using observed flow mark"] + _key_value_table(value, [("available", "Lookup availability"), ("lookup_status", "Lookup result"), ("packet_mark", "Observed fwmark"), ("matched_rule", "Matching policy rule"), ("selected_routing_table", "Selected table"), ("next_hop", "Next hop"), ("output_interface", "Output interface"), ("derived", "Derived interface metadata")])
+        return ["### Route lookup using observed flow mark"] + _key_value_table(value, [("available", "Lookup availability"), ("lookup_status", "Lookup result"), ("reason", "Lookup error"), ("packet_mark", "Observed fwmark"), ("matched_rule", "Matching policy rule"), ("selected_routing_table", "Selected table"), ("next_hop", "Next hop"), ("output_interface", "Output interface"), ("derived", "Derived interface metadata")])
     if kind == "observed_mark_policy":
         if not isinstance(value, dict): return ["### Observed-mark policy evidence", "- not reported"]
         lines=["### Observed-mark policy evidence"]

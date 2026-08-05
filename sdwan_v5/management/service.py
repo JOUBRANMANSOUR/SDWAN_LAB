@@ -93,6 +93,21 @@ class ManagementService:
         return {"available": True, "site": site, "comparisons": comparisons, "desired_record": latest, "runtime_available": runtime_available,
                 "limitations": ["No field is labeled match or mismatch unless desired and observed values have identical semantics."]}
 
+    @staticmethod
+    def _matching_policy_rule(rules: dict[str, Any], fwmark: int | None) -> dict[str, Any] | None:
+        if fwmark is None or rules.get("availability") != "AVAILABLE": return None
+        matched_rule=None
+        for rule in rules.get("value", []):
+            try:
+                mark=int(str(rule.get("fwmark", "-1")), 0)
+                mask=int(str(rule.get("fwmask", "0xffffffff")), 0)
+                if fwmark & mask == mark & mask:
+                    candidate={"priority":rule.get("priority"),"table":rule.get("table"),"fwmark":rule.get("fwmark"),"fwmask":rule.get("fwmask")}
+                    if matched_rule is None or int(candidate["priority"] or 2**31) < int(matched_rule["priority"] or 2**31): matched_rule=candidate
+            except (TypeError, ValueError):
+                continue
+        return matched_rule
+
     def route_decision_report(self, site: str, destination: str, source: str | None = None, fwmark: int | None = None) -> dict[str, Any]:
         """Perform a destination-aware read-only lookup without inventing fields."""
         import ipaddress
@@ -106,22 +121,11 @@ class ManagementService:
             return {"available": False, "reason": "invalid destination or source"}
         lookup = self.runtime.route_lookup(site, destination, source, fwmark)
         rules = self.runtime.rules(site)
+        matched_rule=self._matching_policy_rule(rules, fwmark)
         if lookup.get("availability") != "AVAILABLE":
-            return {"available": False, "reason": lookup.get("reason", "runtime route lookup unavailable")}
+            return {"available":False,"reason":lookup.get("reason", "runtime route lookup unavailable"),"lookup_status":"lookup unavailable","site":site,"destination":destination,"source":source,"packet_mark":fwmark,"matched_rule":matched_rule,"selected_routing_table":None,"next_hop":None,"output_interface":None,"derived":{"hub":None,"transport":None},"unknowns":[{"field":"matched_route","reason":"marked runtime lookup was unavailable"}],"limitations":["The route lookup reflects the supplied destination, optional source, and optional fwmark only."]}
         values = lookup.get("value", [])
         selected = values[0] if isinstance(values, list) and values else {}
-        matched_rule = None
-        if fwmark is not None and rules.get("availability") == "AVAILABLE":
-            for rule in rules.get("value", []):
-                try:
-                    mark = int(str(rule.get("fwmark", "-1")), 0)
-                    mask = int(str(rule.get("fwmask", "0xffffffff")), 0)
-                    if fwmark & mask == mark & mask:
-                        candidate = {"priority": rule.get("priority"), "table": rule.get("table"), "fwmark": rule.get("fwmark"), "fwmask": rule.get("fwmask")}
-                        if matched_rule is None or int(candidate["priority"] or 2**31) < int(matched_rule["priority"] or 2**31):
-                            matched_rule = candidate
-                except (TypeError, ValueError):
-                    continue
         dev = selected.get("dev")
         derived = {"hub": None, "transport": None}
         if isinstance(dev, str) and dev.startswith("wg-"):

@@ -108,13 +108,18 @@ def _wireguard_tunnels_table(value: Any) -> List[str]:
     raw=value.get("value")
     if availability != "AVAILABLE" or not isinstance(raw, str):
         return ["- **availability**: `{}`".format(_markdown(availability))]
-    rows=[]; current=None
+    rows=[]; interface=None; current=None
     for line in raw.splitlines():
         stripped=line.strip()
         if stripped.startswith("interface: "):
             if current is not None:
                 rows.append(current)
-            current={"interface":stripped.split(": ",1)[1]}
+            interface=stripped.split(": ",1)[1]
+            current=None
+        elif stripped.startswith("peer: ") and interface is not None:
+            if current is not None:
+                rows.append(current)
+            current={"interface":interface}
         elif current is not None:
             for key, label in (("endpoint: ", "endpoint"), ("latest handshake: ", "handshake"), ("transfer: ", "transfer"), ("persistent keepalive: ", "keepalive"), ("allowed ips: ", "allowed_ips")):
                 if stripped.startswith(key):

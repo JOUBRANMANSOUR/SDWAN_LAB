@@ -65,6 +65,28 @@ peer: peer-value
         self.assertIn("10.1.0.10", rendered)
         self.assertNotIn("ignored", rendered)
 
+    def test_wireguard_hub_interface_renders_every_peer(self):
+        raw="""interface: wg-spokes-mpls
+peer: first-peer
+  endpoint: 192.168.10.11:52128
+  allowed ips: 10.1.0.0/24
+  latest handshake: 5 seconds ago
+  transfer: 1 KiB received, 2 KiB sent
+  persistent keepalive: every 10 seconds
+peer: second-peer
+  endpoint: 192.168.10.12:52192
+  allowed ips: 10.2.0.0/24
+  latest handshake: 6 seconds ago
+  transfer: 3 KiB received, 4 KiB sent
+  persistent keepalive: every 10 seconds
+"""
+        bundle={"bundle_id":"bundle-hub-peers","payload":{"facts":[{"fact_id":"tunnels","fact_kind":"tunnels","value":{"availability":"AVAILABLE","value":raw}}],"unknowns":[],"limitations":[]}}
+        answer={"answer_type":"operational","summary":"ignored","claims":[{"claim_id":"tunnels","claim_type":"tunnel_status","fact_ids":["tunnels"],"explanation":None}],"unknowns":[],"limitations":[]}
+        rendered=render_verified_answer(self.validator.validate(answer,bundle),bundle)
+        self.assertEqual(rendered.count("wg-spokes-mpls"), 2)
+        self.assertIn("192.168.10.11:52128", rendered)
+        self.assertIn("192.168.10.12:52192", rendered)
+
     def test_endpoint_route_facts_render_configured_and_observed_sections(self):
         bundle={"bundle_id":"bundle-path","payload":{"facts":[
             {"fact_id":"access","fact_kind":"host_access","value":{"source_host":"node1_host","source_ip":"10.1.0.10","edge_site":"node1","lan_gateway":"10.1.0.1","lan_network":"10.1.0.0/24"}},

@@ -164,6 +164,14 @@ def build_server(config: ManagementConfig, principal: Principal) -> FastMCP:
             raise ValueError("UNKNOWN_ENDPOINT: {}".format(data.get("reason", "use get_endpoint_inventory")))
         return _tool_result(service, principal, "explain_endpoint_route", data, "derived", StateKind.derived)
 
+    @mcp.tool(description="Resolve the configured host of one site and report its read-only route evidence to a named destination endpoint. Use for questions phrased like 'route from the host of node2 to the data center'. The site argument always means the branch site, never its edge endpoint; this tool deterministically uses that site's configured host. The optional fwmark is used only for the edge route lookup.")
+    def explain_site_host_route(site: Annotated[str, Field(min_length=1, max_length=64, description="Configured branch site identifier, for example node2")], destination: Annotated[str, Field(min_length=1, max_length=64, description="Configured destination endpoint name or alias, for example data_center")], fwmark: Optional[int] = Field(default=None, ge=0)) -> OperationalResult:
+        _require(principal, "network:read"); _site(service, site)
+        data=service.site_host_route(site, destination, fwmark)
+        if not data.get("available"):
+            raise ValueError("UNKNOWN_ENDPOINT: {}".format(data.get("reason", "use get_endpoint_inventory")))
+        return _tool_result(service, principal, "explain_site_host_route", data, "derived", StateKind.derived)
+
     @mcp.tool(description="Observe an existing branch-host conntrack flow and, only when that flow has a mark, perform a marked route lookup at its edge. Use to prove the selected path for currently active traffic between two configured endpoints. This tool never creates traffic and returns zero observed flows when no matching connection exists.")
     def observe_endpoint_flow(source: Annotated[str, Field(min_length=1, max_length=64, description="Configured branch-host endpoint name or alias")], destination: Annotated[str, Field(min_length=1, max_length=64, description="Configured destination endpoint name or alias")]) -> OperationalResult:
         _require(principal, "network:read")

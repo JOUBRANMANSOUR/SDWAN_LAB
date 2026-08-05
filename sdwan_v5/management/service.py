@@ -239,6 +239,12 @@ class ManagementService:
         result["limitations"]=["The source resolves to a configured endpoint, but this tool currently performs an observed edge route lookup only for a branch host source."]
         return result
 
+    def site_host_route(self, site: str, destination: str, fwmark: int | None = None) -> dict[str, Any]:
+        """Resolve a configured branch host deterministically from its site identifier."""
+        if site not in self.topology.site_names:
+            return {"available":False,"reason":"unknown site"}
+        return self.endpoint_route(self.topology.sites[site].host_name, destination, fwmark)
+
     def observe_endpoint_flow(self, source: str, destination: str) -> dict[str, Any]:
         """Read an active branch-host flow mark and resolve only that observed mark."""
         source_endpoint=self.resolve_endpoint(source); destination_endpoint=self.resolve_endpoint(destination)

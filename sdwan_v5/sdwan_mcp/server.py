@@ -185,6 +185,12 @@ def build_server(config: ManagementConfig, principal: Principal) -> FastMCP:
         _require(principal, "network:read")
         return _tool_result(service, principal, "get_transport_inventory", {"transports":service.transport_inventory()}, "configuration", StateKind.configured)
 
+    @mcp.tool(description="Return observed WireGuard text status for one configured hub through the constrained runtime adapter. Use for WireGuard tunnel questions about hub1 or hub2. This is a read-only runtime inspection and never exposes private keys; unavailable runtime data is reported as unavailable.")
+    def get_hub_tunnels(hub: Annotated[str, Field(min_length=1, max_length=64, description="Configured hub identifier, for example hub2")]) -> OperationalResult:
+        _require(principal, "network:read"); _hub(service, hub)
+        data=service.hub_tunnels(hub)
+        return _tool_result(service, principal, "get_hub_tunnels", data, "wireguard", StateKind.observed)
+
     @mcp.tool(description="Return compact configured information for one hub: its name, management IP address, and address ID. Use for a hub IP or identity question; use get_hub_status only when runtime information is requested.")
     def get_hub_configuration(hub: Annotated[str, Field(min_length=1, max_length=64, description="Configured hub identifier")]) -> OperationalResult:
         _require(principal, "network:read"); _hub(service, hub)

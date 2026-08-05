@@ -7,7 +7,7 @@ from ..common.model import TopologyConfig
 class RuntimeAdapter:
     def __init__(self, topology: TopologyConfig): self.topology = topology
     def _allowed(self, node: str) -> bool:
-        return node in self.topology.site_names or node in {self.topology.data_center_app_name, self.topology.saas_app_name, *self.topology.cloud_vpc.active_gateways, self.topology.cloud_vpc.app_name}
+        return node in self.topology.site_names or node in set(self.topology.hubs) or node in {self.topology.data_center_app_name, self.topology.saas_app_name, *self.topology.cloud_vpc.active_gateways, self.topology.cloud_vpc.app_name}
     def _run(self, node: str, command: list[str]) -> dict[str, Any]:
         if not self._allowed(node): return {"availability":"UNAVAILABLE","reason":"unknown topology node"}
         result=subprocess.run(["docker","exec","mn."+node,*command],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,check=False,timeout=5)

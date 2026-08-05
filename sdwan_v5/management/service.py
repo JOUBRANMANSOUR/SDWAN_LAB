@@ -152,6 +152,10 @@ class ManagementService:
                 "limitations": ["The route lookup reflects the supplied destination, optional source, and optional fwmark only.", "A connection mark is not exposed by the current routing adapter."],
                 "warnings": []}
 
+    def hub_tunnels(self, hub: str) -> dict[str, Any]:
+        if hub not in self.topology.hubs: return {"available":False,"reason":"unknown hub"}
+        return {"available":True,"hub":hub,"tunnels":self.runtime.tunnels(hub)}
+
     def hub_view(self, hub: str) -> dict[str, Any]:
         if hub not in self.topology.hubs: return {"availability":"UNAVAILABLE", "reason":"unknown hub"}
         return {"hub":hub,"configured":{"management_ip":str(self.topology.hubs[hub].management_ip)},"runtime":self.runtime_view(hub)}

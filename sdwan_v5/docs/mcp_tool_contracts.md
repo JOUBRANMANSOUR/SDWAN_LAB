@@ -46,3 +46,5 @@ Every tool remains local stdio-only, constrained to read-only data sources, and 
 When no fwmark is supplied, `explain_endpoint_route` reports matching installed policy-rule and route candidates separately from its unmarked lookup; these candidates do not assert a selected path. `observe_endpoint_flow` is a read-only runtime tool for an already active branch-host connection. It reads matching conntrack marks and performs a marked lookup only when a mark is observed. It never generates traffic or modifies connection tracking.
 
 `explain_site_host_route` is the unambiguous tool for a question about “the host of nodeN”: it takes the site name and always resolves the configured branch host, never the edge router.
+
+`get_site_tunnels` is for branch sites only. `get_hub_tunnels` is the corresponding read-only WireGuard inspection for `hub1` and `hub2`.

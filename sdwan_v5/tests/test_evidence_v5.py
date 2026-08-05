@@ -26,6 +26,16 @@ class EvidenceTests(unittest.TestCase):
         self.assertIn("| Priority | FWMark |", rendered)
         self.assertNotIn("ignored", rendered)
 
+    def test_tunnel_claim_discards_tool_metadata_and_keeps_tunnel_fact(self):
+        bundle={"bundle_id":"bundle-hub-tunnels","payload":{"facts":[
+            {"fact_id":"hub","fact_kind":"hub","value":"hub2"},
+            {"fact_id":"tunnels","fact_kind":"tunnels","value":{"availability":"AVAILABLE","value":"interface: wg-spokes-mpls"}}
+        ],"unknowns":[],"limitations":[]}}
+        answer={"answer_type":"operational","summary":"ignored","claims":[{"claim_id":"tunnels","claim_type":"tunnel_status","fact_ids":["hub","tunnels"],"explanation":None}],"unknowns":[],"limitations":[]}
+        result=self.validator.validate(answer,bundle)
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["answer"]["claims"][0]["fact_ids"], ["tunnels"])
+
     def test_tunnel_facts_render_as_observed_table_without_key_material(self):
         raw="""interface: wg-h1-mpls
   public key: public-value

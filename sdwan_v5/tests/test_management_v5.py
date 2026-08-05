@@ -78,6 +78,16 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(gateway['management_ip'], '172.30.0.21')
         self.assertEqual(len(gateway['transits']), 2)
 
+    def test_hub_tunnels_use_the_hub_runtime_namespace(self):
+        class Runtime:
+            def tunnels(self, hub): return {"availability":"AVAILABLE","value":"interface: wg-spokes-mpls"}
+        with tempfile.TemporaryDirectory() as directory:
+            config = ManagementConfig(ROOT/'config/topology.yaml', Path(directory)/'policy.db', Path(directory)/'ztp.db', Path(directory), 'test-secret', '', '')
+            service=ManagementService(config); service.runtime=Runtime()
+            report=service.hub_tunnels('hub2')
+        self.assertEqual(report['hub'], 'hub2')
+        self.assertEqual(report['tunnels']['value'], 'interface: wg-spokes-mpls')
+
     def test_site_host_route_never_resolves_to_the_edge(self):
         class Runtime:
             def route_lookup(self, site, destination, source=None, fwmark=None): return {"availability":"AVAILABLE","value":[]}

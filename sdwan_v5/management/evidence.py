@@ -31,7 +31,7 @@ class EvidenceValidator:
         }
         if answer.answer_type in (AnswerType.operational, AnswerType.mixed) and not answer.claims:
             errors.append({"code":"OPERATIONAL_CLAIMS_REQUIRED"})
-        complete_path_claims={"endpoint_route", "flow_route"}
+        complete_path_claims={"endpoint_route", "flow_route", "tunnel_status"}
         for claim in answer.claims:
             if answer.answer_type == AnswerType.conceptual:
                 errors.append({"code":"CONCEPTUAL_ANSWER_HAS_OPERATIONAL_CLAIM","claim_id":claim.claim_id}); continue

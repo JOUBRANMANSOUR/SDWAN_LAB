@@ -66,6 +66,16 @@ peer: peer-value
         self.assertIn("Observed edge route lookup", rendered)
         self.assertNotIn("ignored", rendered)
 
+    def test_endpoint_route_claim_is_completed_with_candidate_evidence(self):
+        bundle={"bundle_id":"bundle-complete-path","payload":{"facts":[
+            {"fact_id":"source","fact_kind":"source","value":{"name":"node2_host"}},
+            {"fact_id":"candidates","fact_kind":"policy_candidates","value":[]}
+        ],"unknowns":[],"limitations":[]}}
+        answer={"answer_type":"operational","summary":"ignored","claims":[{"claim_id":"path","claim_type":"endpoint_route","fact_ids":["source"],"explanation":None}],"unknowns":[],"limitations":[]}
+        result=self.validator.validate(answer,bundle)
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["answer"]["claims"][0]["fact_ids"], ["source", "candidates"])
+
     def test_policy_candidates_and_observed_flow_render_as_separate_evidence(self):
         bundle={"bundle_id":"bundle-candidates","payload":{"facts":[
             {"fact_id":"candidates","fact_kind":"policy_candidates","value":[{"table":"1101","policy_rules":[{"fwmark":"0x1001"}],"output_interface":"wg-h1-mpls","hub":"hub1","transport":"mpls","matching_destinations":["10.100.0.0/24"]}]},

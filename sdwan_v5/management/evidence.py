@@ -31,9 +31,14 @@ class EvidenceValidator:
         }
         if answer.answer_type in (AnswerType.operational, AnswerType.mixed) and not answer.claims:
             errors.append({"code":"OPERATIONAL_CLAIMS_REQUIRED"})
+        complete_path_claims={"endpoint_route", "flow_route"}
         for claim in answer.claims:
             if answer.answer_type == AnswerType.conceptual:
                 errors.append({"code":"CONCEPTUAL_ANSWER_HAS_OPERATIONAL_CLAIM","claim_id":claim.claim_id}); continue
+            if claim.claim_type in complete_path_claims:
+                # A route answer must show the complete compatible evidence set,
+                # not a model-selected subset that could hide candidates or marks.
+                claim.fact_ids=list(dict.fromkeys(list(claim.fact_ids) + [fact_id for fact_id, fact in facts.items() if fact.get("fact_kind") in compatible[claim.claim_type]]))
             if not claim.fact_ids:
                 errors.append({"code":"CLAIM_EVIDENCE_REQUIRED","claim_id":claim.claim_id}); continue
             missing=[fact_id for fact_id in claim.fact_ids if fact_id not in facts]

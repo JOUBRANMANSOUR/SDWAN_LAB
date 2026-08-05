@@ -66,6 +66,14 @@ peer: peer-value
         self.assertIn("Observed edge route lookup", rendered)
         self.assertNotIn("ignored", rendered)
 
+    def test_observed_mark_policy_renders_rule_and_candidate_separately(self):
+        bundle={"bundle_id":"bundle-mark-policy","payload":{"facts":[{"fact_id":"policy","fact_kind":"observed_mark_policy","value":{"observed_mark":{"mark":4353},"matched_rule":{"table":1101,"fwmark":"0x1001"},"matching_route_candidates":[{"table":"1101","policy_rules":[{"fwmark":"0x1001"}],"output_interface":"wg-h1-mpls","hub":"hub1","transport":"mpls","matching_destinations":["10.100.0.0/24"]}]}}],"unknowns":[],"limitations":[]}}
+        answer={"answer_type":"operational","summary":"ignored","claims":[{"claim_id":"flow","claim_type":"flow_route","fact_ids":["policy"],"explanation":None}],"unknowns":[],"limitations":[]}
+        rendered=render_verified_answer(self.validator.validate(answer,bundle),bundle)
+        self.assertIn("Observed-mark policy evidence", rendered)
+        self.assertIn("Matching installed route candidates", rendered)
+        self.assertIn("wg-h1-mpls", rendered)
+
     def test_endpoint_route_claim_is_completed_with_candidate_evidence(self):
         bundle={"bundle_id":"bundle-complete-path","payload":{"facts":[
             {"fact_id":"available","fact_kind":"available","value":True},

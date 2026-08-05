@@ -140,6 +140,7 @@ class ManagementService:
         return {"available": True, "site": site, "destination": destination, "source": source, "packet_mark": fwmark,
                 "matched_rule": matched_rule, "selected_routing_table": selected.get("table"),
                 "matched_route": {key: selected.get(key) for key in ("dst", "gateway", "dev", "prefsrc", "type") if selected.get(key) is not None} or None,
+                "lookup_status": "route record returned" if selected else "no route record returned",
                 "next_hop": selected.get("gateway"), "output_interface": dev,
                 "connection_mark": None, "derived": derived,
                 "state_kind": {"packet_mark": "observed" if fwmark is not None else "unavailable", "matched_rule": "derived" if matched_rule else "unavailable", "matched_route": "observed" if selected else "unavailable", "hub": "derived" if derived["hub"] else "unavailable", "transport": "derived" if derived["transport"] else "unavailable"},
@@ -259,8 +260,13 @@ class ManagementService:
         marks=observed.get("value", [])
         result={"available":True,"source":source_endpoint,"destination":destination_endpoint,"flow_observation":{"flow_count":len(marks),"marks":marks}}
         if marks:
-            result["selected_live_route"]=self.route_decision_report(site.name,destination_endpoint["ip"],source_endpoint["ip"],marks[0]["mark"])
-        result["limitations"]=["Only an existing conntrack flow matching the resolved source and destination can provide an observed mark.", "When multiple matching flows exist, only the first bounded observed mark is used for the marked route lookup."]
+            selected=self.route_decision_report(site.name,destination_endpoint["ip"],source_endpoint["ip"],marks[0]["mark"])
+            result["selected_live_route"]=selected
+            if selected.get("output_interface") is None and selected.get("matched_rule"):
+                table=str(selected["matched_rule"].get("table"))
+                candidates=[candidate for candidate in self.policy_route_candidates(site.name,destination_endpoint["ip"]) if candidate.get("table") == table]
+                result["observed_mark_policy"]={"observed_mark":marks[0],"matched_rule":selected["matched_rule"],"matching_route_candidates":candidates}
+        result["limitations"]=["Only an existing conntrack flow matching the resolved source and destination can provide an observed mark.", "When multiple matching flows exist, only the first bounded observed mark is used for the marked route lookup.", "If the marked kernel lookup returns no route record, the observed-mark policy section reports only the matching installed rule and route candidate; it is not a kernel lookup result."]
         return result
 
     def transport_inventory(self) -> list[dict[str, Any]]:

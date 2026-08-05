@@ -115,6 +115,20 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(report['flow_observation']['marks'][0]['mark'], 4097)
         self.assertEqual(report['selected_live_route']['output_interface'], 'wg-h1-mpls')
 
+    def test_observed_mark_policy_is_reported_when_lookup_has_no_route_record(self):
+        class Runtime:
+            def connection_marks(self, site, source, destination): return {"availability":"AVAILABLE","value":[{"mark":4353,"raw_mark":"4353"}]}
+            def route_lookup(self, site, destination, source=None, fwmark=None): return {"availability":"AVAILABLE","value":[]}
+            def routes(self, site): return {"availability":"AVAILABLE","value":[{"dst":"10.100.0.0/24","table":1101,"dev":"wg-h1-mpls"}]}
+            def rules(self, site): return {"availability":"AVAILABLE","value":[{"priority":1101,"fwmark":"0x1001","fwmask":"0x30ff","table":1101}]}
+        with tempfile.TemporaryDirectory() as directory:
+            config = ManagementConfig(ROOT/'config/topology.yaml', Path(directory)/'policy.db', Path(directory)/'ztp.db', Path(directory), 'test-secret', '', '')
+            service=ManagementService(config); service.runtime=Runtime()
+            report=service.observe_endpoint_flow('node2_host','dc')
+        self.assertEqual(report['selected_live_route']['lookup_status'], 'no route record returned')
+        self.assertEqual(report['observed_mark_policy']['matched_rule']['table'], 1101)
+        self.assertEqual(report['observed_mark_policy']['matching_route_candidates'][0]['output_interface'], 'wg-h1-mpls')
+
     def test_endpoint_resolves_a_single_host_alias(self):
         with tempfile.TemporaryDirectory() as directory:
             config = ManagementConfig(ROOT/'config/topology.yaml', Path(directory)/'policy.db', Path(directory)/'ztp.db', Path(directory), 'test-secret', '', '')

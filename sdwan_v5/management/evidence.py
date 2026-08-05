@@ -16,7 +16,7 @@ class EvidenceValidator:
         compatible = {
             "system_health": {"status", "mode", "sources"},
             "topology": {"management_network", "hubs", "sites", "transports", "nodes", "links", "cloud_vpc", "data_center", "saas"},
-            "endpoint": {"endpoint", "endpoints", "source", "destination"}, "endpoint_route": {"source", "destination", "host_access", "edge_route", "policy_candidates"}, "flow_route": {"source", "destination", "flow_observation", "selected_live_route"},
+            "endpoint": {"endpoint", "endpoints", "source", "destination"}, "endpoint_route": {"source", "destination", "host_access", "edge_route", "policy_candidates"}, "flow_route": {"source", "destination", "flow_observation", "selected_live_route", "observed_mark_policy"},
             "transport": {"transports"},
             "site_status": {"sites", "site", "lan_prefix", "preferred_hub", "standby_hub", "status", "configured", "desired", "runtime", "links", "tunnels", "routes", "rules", "failover", "classifier"},
             "hub_status": {"hub", "management_ip", "address_id", "configured", "runtime"},
@@ -156,7 +156,14 @@ def _render_fact(fact: Dict[str, Any]) -> List[str]:
     if kind == "flow_observation":
         return ["### Observed matching flow"] + _key_value_table(value, [("flow_count", "Observed matching flows"), ("marks", "Observed marks")])
     if kind == "selected_live_route":
-        return ["### Route lookup using observed flow mark"] + _key_value_table(value, [("packet_mark", "Observed fwmark"), ("selected_routing_table", "Selected table"), ("next_hop", "Next hop"), ("output_interface", "Output interface"), ("derived", "Derived interface metadata")])
+        return ["### Route lookup using observed flow mark"] + _key_value_table(value, [("available", "Lookup availability"), ("lookup_status", "Lookup result"), ("packet_mark", "Observed fwmark"), ("matched_rule", "Matching policy rule"), ("selected_routing_table", "Selected table"), ("next_hop", "Next hop"), ("output_interface", "Output interface"), ("derived", "Derived interface metadata")])
+    if kind == "observed_mark_policy":
+        if not isinstance(value, dict): return ["### Observed-mark policy evidence", "- not reported"]
+        lines=["### Observed-mark policy evidence"]
+        lines += _key_value_table(value, [("observed_mark", "Observed conntrack mark"), ("matched_rule", "Matching installed policy rule")])
+        lines.append("#### Matching installed route candidates")
+        lines += _policy_candidates_table(value.get("matching_route_candidates"))
+        return lines
     if kind == "tunnels":
         return ["### Observed WireGuard tunnels"] + _wireguard_tunnels_table(value)
     if kind in {"endpoint", "source", "destination"}:

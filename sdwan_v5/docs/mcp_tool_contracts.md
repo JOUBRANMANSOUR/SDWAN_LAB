@@ -39,3 +39,8 @@ Every tool remains local stdio-only, constrained to read-only data sources, and 
 ## Endpoint-aware path questions
 
 `get_endpoint` returns one compact configured endpoint record for a known name or alias; `get_endpoint_inventory` publishes all configured endpoint identities and aliases only for discovery. `explain_endpoint_route` resolves a source and destination alias before answering a host-to-destination path question. For a branch-host source it reports two separately labelled evidence sets: the configured host-to-LAN-gateway access hop, and the observed route lookup performed at the associated edge site. It accepts `node1_host` and `node_host1`, as well as `data_center`/`dc`, `saas`, `cloud_app`, and Cloud gateway names. Supplying no fwmark leaves policy-rule selection unproven rather than inferred.
+
+
+## Policy candidates and observed flows
+
+When no fwmark is supplied, `explain_endpoint_route` reports matching installed policy-rule and route candidates separately from its unmarked lookup; these candidates do not assert a selected path. `observe_endpoint_flow` is a read-only runtime tool for an already active branch-host connection. It reads matching conntrack marks and performs a marked lookup only when a mark is observed. It never generates traffic or modifies connection tracking.

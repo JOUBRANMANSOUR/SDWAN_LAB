@@ -191,6 +191,34 @@ class ManagementService:
             return {"available":False,"reason":"unknown configured endpoint"}
         return {"available":True,"endpoint":endpoint}
 
+    def policy_route_candidates(self, site: str, destination: str) -> list[dict[str, Any]]:
+        """List installed matching policy routes; this does not assert a selected path."""
+        import ipaddress
+        try: address=ipaddress.ip_address(destination)
+        except ValueError: return []
+        try:
+            summary=self.route_summary(site)
+        except AttributeError:
+            # A constrained runtime adapter may expose lookup support without
+            # a complete route-list capability; omit candidates rather than infer.
+            return []
+        if not summary.get("available"): return []
+        rules_by_table={}
+        for rule in summary.get("routing_rules", []):
+            rules_by_table.setdefault(str(rule.get("table")), []).append({key:rule.get(key) for key in ("priority","fwmark","fwmask","table")})
+        candidates=[]
+        for group in summary.get("route_groups", []):
+            matching=[]
+            for prefix in group.get("destinations", []):
+                try:
+                    if address in ipaddress.ip_network(prefix, strict=False): matching.append(prefix)
+                except ValueError:
+                    continue
+            if matching:
+                table=str(group.get("table"))
+                candidates.append({"table":table,"matching_destinations":matching,"output_interface":group.get("output_interface"),"hub":group.get("hub"),"transport":group.get("transport"),"next_hop":group.get("next_hop"),"policy_rules":rules_by_table.get(table, [])})
+        return candidates
+
     def endpoint_route(self, source: str, destination: str, fwmark: int | None = None) -> dict[str, Any]:
         source_endpoint=self.resolve_endpoint(source)
         destination_endpoint=self.resolve_endpoint(destination)
@@ -204,9 +232,29 @@ class ManagementService:
             site=self.topology.sites[source_endpoint["site"]]
             result["host_access"]={"source_host":source_endpoint["name"],"source_ip":source_endpoint["ip"],"edge_site":site.name,"lan_gateway":str(site.lan_gateway),"lan_network":str(site.lan_network)}
             result["edge_route"]=self.route_decision_report(site.name,destination_endpoint["ip"],source_endpoint["ip"],fwmark)
-            result["limitations"]=["The host-to-LAN-gateway hop is configured topology evidence. The edge route lookup reflects the supplied destination, source, and optional fwmark."]
+            if fwmark is None:
+                result["policy_candidates"]=self.policy_route_candidates(site.name,destination_endpoint["ip"])
+            result["limitations"]=["The host-to-LAN-gateway hop is configured topology evidence. The edge route lookup reflects the supplied destination, source, and optional fwmark.", "Policy candidates are matching installed rules and routes; without an observed or supplied fwmark they do not prove the selected path."]
             return result
         result["limitations"]=["The source resolves to a configured endpoint, but this tool currently performs an observed edge route lookup only for a branch host source."]
+        return result
+
+    def observe_endpoint_flow(self, source: str, destination: str) -> dict[str, Any]:
+        """Read an active branch-host flow mark and resolve only that observed mark."""
+        source_endpoint=self.resolve_endpoint(source); destination_endpoint=self.resolve_endpoint(destination)
+        if source_endpoint is None or destination_endpoint is None:
+            return {"available":False,"reason":"unresolved endpoint"}
+        if source_endpoint["kind"] != "branch_host":
+            return {"available":False,"reason":"source must resolve to a branch host"}
+        site=self.topology.sites[source_endpoint["site"]]
+        observed=self.runtime.connection_marks(site.name,source_endpoint["ip"],destination_endpoint["ip"])
+        if observed.get("availability") != "AVAILABLE":
+            return {"available":False,"reason":observed.get("reason", "conntrack observation unavailable")}
+        marks=observed.get("value", [])
+        result={"available":True,"source":source_endpoint,"destination":destination_endpoint,"flow_observation":{"flow_count":len(marks),"marks":marks}}
+        if marks:
+            result["selected_live_route"]=self.route_decision_report(site.name,destination_endpoint["ip"],source_endpoint["ip"],marks[0]["mark"])
+        result["limitations"]=["Only an existing conntrack flow matching the resolved source and destination can provide an observed mark.", "When multiple matching flows exist, only the first bounded observed mark is used for the marked route lookup."]
         return result
 
     def transport_inventory(self) -> list[dict[str, Any]]:

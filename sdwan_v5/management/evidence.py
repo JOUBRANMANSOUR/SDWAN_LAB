@@ -16,7 +16,7 @@ class EvidenceValidator:
         compatible = {
             "system_health": {"status", "mode", "sources"},
             "topology": {"management_network", "hubs", "sites", "transports", "nodes", "links", "cloud_vpc", "data_center", "saas"},
-            "endpoint": {"endpoint", "endpoints", "source", "destination"}, "endpoint_route": {"source", "destination", "host_access", "edge_route"},
+            "endpoint": {"endpoint", "endpoints", "source", "destination"}, "endpoint_route": {"source", "destination", "host_access", "edge_route", "policy_candidates"}, "flow_route": {"source", "destination", "flow_observation", "selected_live_route"},
             "transport": {"transports"},
             "site_status": {"sites", "site", "lan_prefix", "preferred_hub", "standby_hub", "status", "configured", "desired", "runtime", "links", "tunnels", "routes", "rules", "failover", "classifier"},
             "hub_status": {"hub", "management_ip", "address_id", "configured", "runtime"},
@@ -66,6 +66,19 @@ def _route_groups_table(groups: Any) -> List[str]:
             _markdown(group.get("table")), _markdown(group.get("output_interface")),
             _markdown(group.get("hub")), _markdown(group.get("transport")),
             _markdown(group.get("next_hop")), destination_text or "not reported"))
+    return lines
+
+def _policy_candidates_table(candidates: Any) -> List[str]:
+    if not isinstance(candidates, list):
+        return ["- **policy_candidates**: `{}`".format(json.dumps(candidates, sort_keys=True, default=str))]
+    if not candidates:
+        return ["- No matching installed policy-route candidates were reported."]
+    lines=["| Table | Rule marks | Interface | Hub | Transport | Matching destination |", "|---|---|---|---|---|---|"]
+    for candidate in candidates:
+        rules=candidate.get("policy_rules", []) if isinstance(candidate, dict) else []
+        marks=", ".join(_markdown(rule.get("fwmark")) for rule in rules if isinstance(rule, dict)) or "not reported"
+        destinations=", ".join(_markdown(item) for item in candidate.get("matching_destinations", [])) if isinstance(candidate, dict) else "not reported"
+        lines.append("| {} | {} | {} | {} | {} | {} |".format(_markdown(candidate.get("table")), marks, _markdown(candidate.get("output_interface")), _markdown(candidate.get("hub")), _markdown(candidate.get("transport")), destinations))
     return lines
 
 def _routing_rules_table(rules: Any) -> List[str]:
@@ -132,6 +145,12 @@ def _render_fact(fact: Dict[str, Any]) -> List[str]:
         return ["### Installed route groups"] + _route_groups_table(value)
     if kind == "routing_rules":
         return ["### Installed policy rules"] + _routing_rules_table(value)
+    if kind == "policy_candidates":
+        return ["### Matching policy-route candidates"] + _policy_candidates_table(value)
+    if kind == "flow_observation":
+        return ["### Observed matching flow"] + _key_value_table(value, [("flow_count", "Observed matching flows"), ("marks", "Observed marks")])
+    if kind == "selected_live_route":
+        return ["### Route lookup using observed flow mark"] + _key_value_table(value, [("packet_mark", "Observed fwmark"), ("selected_routing_table", "Selected table"), ("next_hop", "Next hop"), ("output_interface", "Output interface"), ("derived", "Derived interface metadata")])
     if kind == "tunnels":
         return ["### Observed WireGuard tunnels"] + _wireguard_tunnels_table(value)
     if kind in {"endpoint", "source", "destination"}:

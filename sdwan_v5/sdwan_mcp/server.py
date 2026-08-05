@@ -164,6 +164,14 @@ def build_server(config: ManagementConfig, principal: Principal) -> FastMCP:
             raise ValueError("UNKNOWN_ENDPOINT: {}".format(data.get("reason", "use get_endpoint_inventory")))
         return _tool_result(service, principal, "explain_endpoint_route", data, "derived", StateKind.derived)
 
+    @mcp.tool(description="Observe an existing branch-host conntrack flow and, only when that flow has a mark, perform a marked route lookup at its edge. Use to prove the selected path for currently active traffic between two configured endpoints. This tool never creates traffic and returns zero observed flows when no matching connection exists.")
+    def observe_endpoint_flow(source: Annotated[str, Field(min_length=1, max_length=64, description="Configured branch-host endpoint name or alias")], destination: Annotated[str, Field(min_length=1, max_length=64, description="Configured destination endpoint name or alias")]) -> OperationalResult:
+        _require(principal, "network:read")
+        data=service.observe_endpoint_flow(source, destination)
+        if not data.get("available"):
+            raise ValueError("FLOW_OBSERVATION_UNAVAILABLE: {}".format(data.get("reason", "runtime observation unavailable")))
+        return _tool_result(service, principal, "observe_endpoint_flow", data, "routing_table", StateKind.observed)
+
     @mcp.tool(description="Return configured transport inventory: networks, switches, bandwidth, delay, direct-internet capability, and route-table IDs. Use for MPLS, broadband, or LTE configuration questions. Takes no input.")
     def get_transport_inventory() -> OperationalResult:
         _require(principal, "network:read")

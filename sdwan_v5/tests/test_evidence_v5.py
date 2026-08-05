@@ -66,6 +66,18 @@ peer: peer-value
         self.assertIn("Observed edge route lookup", rendered)
         self.assertNotIn("ignored", rendered)
 
+    def test_policy_candidates_and_observed_flow_render_as_separate_evidence(self):
+        bundle={"bundle_id":"bundle-candidates","payload":{"facts":[
+            {"fact_id":"candidates","fact_kind":"policy_candidates","value":[{"table":"1101","policy_rules":[{"fwmark":"0x1001"}],"output_interface":"wg-h1-mpls","hub":"hub1","transport":"mpls","matching_destinations":["10.100.0.0/24"]}]},
+            {"fact_id":"flow","fact_kind":"flow_observation","value":{"flow_count":1,"marks":[{"mark":4097,"raw_mark":"0x1001"}]}},
+            {"fact_id":"live","fact_kind":"selected_live_route","value":{"packet_mark":4097,"selected_routing_table":1101,"output_interface":"wg-h1-mpls","derived":{"hub":"hub1","transport":"mpls"}}}
+        ],"unknowns":[],"limitations":[]}}
+        answer={"answer_type":"operational","summary":"ignored","claims":[{"claim_id":"candidates","claim_type":"endpoint_route","fact_ids":["candidates"],"explanation":None},{"claim_id":"flow","claim_type":"flow_route","fact_ids":["flow","live"],"explanation":None}],"unknowns":[],"limitations":[]}
+        rendered=render_verified_answer(self.validator.validate(answer,bundle),bundle)
+        self.assertIn("Matching policy-route candidates", rendered)
+        self.assertIn("Route lookup using observed flow mark", rendered)
+        self.assertNotIn("ignored", rendered)
+
     def test_endpoint_route_unavailable_lookup_is_rendered_without_a_route_claim(self):
         bundle={"bundle_id":"bundle-unavailable-path","payload":{"facts":[
             {"fact_id":"source","fact_kind":"source","value":{"name":"node1_host","kind":"branch_host","ip":"10.1.0.10","site":"node1"}},

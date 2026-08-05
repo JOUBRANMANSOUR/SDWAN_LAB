@@ -1,6 +1,6 @@
 """Constrained Docker namespace inspection; never executes client-provided commands."""
 from __future__ import annotations
-import json, subprocess
+import json, re, subprocess
 from typing import Any
 from ..common.model import TopologyConfig
 
@@ -28,6 +28,19 @@ class RuntimeAdapter:
         if fwmark is not None:
             command.extend(["mark", str(fwmark)])
         return self.json(node, command)
+    def connection_marks(self, node: str, source: str, destination: str) -> dict[str, Any]:
+        """Return marks for matching existing conntrack flows; never alters state."""
+        result=self._run(node,["conntrack","-L","-o","extended"])
+        if result["availability"] != "AVAILABLE": return result
+        matches=[]
+        for line in str(result.get("value", "")).splitlines():
+            if "src=" + source not in line or "dst=" + destination not in line: continue
+            match=re.search(r"\bmark=(0x[0-9A-Fa-f]+|[0-9]+)", line)
+            if match is None: continue
+            try: mark=int(match.group(1), 0)
+            except ValueError: continue
+            matches.append({"mark":mark,"raw_mark":match.group(1)})
+        return {"availability":"AVAILABLE","value":matches[:32]}
     def links(self,node: str): return self.json(node,["ip","-j","link","show"])
     def failover(self,node: str): return self._run(node,["cat","/var/lib/sdwan/state/failover-status.json"])
     def classifier(self,node: str): return self._run(node,["tail","-n","50","/var/lib/sdwan/state/classifier-events.jsonl"])

@@ -68,10 +68,12 @@ peer: peer-value
 
     def test_endpoint_route_claim_is_completed_with_candidate_evidence(self):
         bundle={"bundle_id":"bundle-complete-path","payload":{"facts":[
+            {"fact_id":"available","fact_kind":"available","value":True},
             {"fact_id":"source","fact_kind":"source","value":{"name":"node2_host"}},
-            {"fact_id":"candidates","fact_kind":"policy_candidates","value":[]}
+            {"fact_id":"candidates","fact_kind":"policy_candidates","value":[]},
+            {"fact_id":"limitations","fact_kind":"limitations","value":["example"]}
         ],"unknowns":[],"limitations":[]}}
-        answer={"answer_type":"operational","summary":"ignored","claims":[{"claim_id":"path","claim_type":"endpoint_route","fact_ids":["source"],"explanation":None}],"unknowns":[],"limitations":[]}
+        answer={"answer_type":"operational","summary":"ignored","claims":[{"claim_id":"path","claim_type":"endpoint_route","fact_ids":["available","source","candidates","limitations"],"explanation":None}],"unknowns":[],"limitations":[]}
         result=self.validator.validate(answer,bundle)
         self.assertTrue(result["valid"])
         self.assertEqual(result["answer"]["claims"][0]["fact_ids"], ["source", "candidates"])

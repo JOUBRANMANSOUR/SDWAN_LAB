@@ -167,7 +167,7 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
         bundle_id = uuid.uuid4().hex
         service.audit.create_evidence_bundle(bundle_id, session_id, message_id, user.subject)
         async def execute():
-            final_text=""; finalized=False
+            final_text=""
             async def validate_final(text: str):
                 await queue.put({"type":"answer_validation_started","data":{"bundle_id":bundle_id}})
                 bundle=service.audit.evidence_bundle(bundle_id,session_id,user.subject)
@@ -196,14 +196,20 @@ def create_app(config: ManagementConfig | None = None) -> FastAPI:
             await queue.put({"type":"evidence_bundle_created","data":{"bundle_id":bundle_id,"message_id":message_id}})
             await queue.put({"type":"agent_starting","data":{}})
             try:
-                async for event in runner.run(prompt,str(session_id),user,str(message_id),bundle_id):
-                    await queue.put({"type":event.type,"data":event.data})
-                    if event.type=="agent_final" and not finalized:
-                        final_text=str(event.data.get("text",""))
-                        await validate_final(final_text)
-                        finalized=True
-                if not finalized:
-                    await validate_final(final_text)
+                # A fresh stdio MCP session can occasionally finish after
+                # capability discovery without emitting a terminal result.
+                # Retry once before finalizing an evidence-unavailable answer.
+                for attempt in range(2):
+                    final_text=""
+                    async for event in runner.run(prompt,str(session_id),user,str(message_id),bundle_id):
+                        await queue.put({"type":event.type,"data":event.data})
+                        if event.type=="agent_final":
+                            final_text=str(event.data.get("text", ""))
+                    if final_text:
+                        break
+                    if attempt == 0:
+                        await queue.put({"type":"agent_retrying","data":{"reason":"agent completed without a final result"}})
+                await validate_final(final_text)
             except Exception:
                 await queue.put({"type":"agent_error","data":{"reason":"agent gateway failed"}})
             finally:

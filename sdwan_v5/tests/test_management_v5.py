@@ -31,6 +31,25 @@ class ManagementTests(unittest.TestCase):
             self.assertEqual(response.status_code,202); self.assertTrue(response.json()['accepted'])
             self.assertEqual(len(client.get('/api/v1/chat/sessions/%s'%session,headers=headers).json()),2)
             self.assertTrue(client.get('/api/v1/audit',headers=headers).json())
+    def test_chat_retries_once_when_agent_produces_no_final_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client=self.app(directory); headers={'Authorization':'Bearer '+self.token(client,'admin')}
+            session=client.post('/api/v1/chat/sessions',headers=headers).json()['session_id']
+            from unittest.mock import patch
+            calls=[]
+            async def fake_run(*args, **kwargs):
+                calls.append(1)
+                from sdwan_v5.management.agent import AgentEvent
+                if len(calls) == 1:
+                    yield AgentEvent('agent_completed', {})
+                else:
+                    yield AgentEvent('agent_final', {'text':'{"answer_type":"operational","summary":"x","claims":[],"unknowns":[],"limitations":[]}'})
+                    yield AgentEvent('agent_completed', {})
+            with patch('sdwan_v5.management.app.OllamaClaudeRunner.run', fake_run):
+                response=client.post('/api/v1/chat/sessions/%s/messages'%session,headers=headers,json={'message':'status'})
+            self.assertEqual(response.status_code,202)
+            self.assertEqual(len(calls), 2)
+
     def test_route_decision_report_is_deterministic_and_evidence_bounded(self):
         class Runtime:
             def routes(self, site):

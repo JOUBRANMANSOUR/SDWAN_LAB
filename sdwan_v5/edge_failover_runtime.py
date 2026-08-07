@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
 import subprocess
 import time
+from threading import Lock
 import uuid
 from typing import Any, Mapping, Protocol
 
@@ -81,6 +83,8 @@ class LocalFailoverRuntime:
         self._measurements: dict[str, dict[str, Any]] = {}
         self._decisions: dict[str, dict[str, Any]] = {}
         self.sequence = 0
+        self._sequence_lock = Lock()
+        self._measurement_lock = Lock()
         self.recovery_started: set[str] = set()
         self._last_status: dict[str, tuple[str, str, int]] = {}
 
@@ -90,10 +94,23 @@ class LocalFailoverRuntime:
         return result.returncode == 0, result.stdout
 
     @staticmethod
-    def _parse_ping(output: str, successful: bool) -> tuple[float | None, float]:
+    def _parse_ping(output: str, successful: bool) -> tuple[float | None, float, int | None, int | None]:
         loss = re.search(r"(\d+(?:\.\d+)?)% packet loss", output)
+        packets = re.search(r"(\d+) packets transmitted, (\d+) received", output)
         rtt = re.search(r"=\s*[\d.]+/([\d.]+)/", output)
-        return float(rtt.group(1)) if rtt else None, float(loss.group(1)) if loss else (0.0 if successful else 100.0)
+        transmitted = int(packets.group(1)) if packets else None
+        received = int(packets.group(2)) if packets else None
+        return (
+            float(rtt.group(1)) if rtt else None,
+            float(loss.group(1)) if loss else (0.0 if successful else 100.0),
+            transmitted,
+            received,
+        )
+
+    def _next_sequence(self) -> int:
+        with self._sequence_lock:
+            self.sequence += 1
+            return self.sequence
 
     def _interface_bytes(self, interface: str) -> int | None:
         """Return the busiest-direction byte counter for capacity estimation."""
@@ -109,15 +126,16 @@ class LocalFailoverRuntime:
         self, path_id: str, interface: str, destination: str, *,
         hub: str | None, transport: str, egress_mode: EgressMode, fwmark: int | None = None,
     ) -> dict[str, Any]:
-        now = time.monotonic()
         command = ["ping", "-I", interface]
         if fwmark is not None:
             command.extend(["-m", str(fwmark)])
-        command.extend(["-c", "3", "-W", "1", "-q", destination])
+        command.extend(["-c", "10", "-i", "0.1", "-W", "1", "-q", destination])
         successful, output = self._check(command)
-        rtt_sample, loss_sample = self._parse_ping(output, successful)
+        now = time.monotonic()
+        rtt_sample, loss_sample, transmitted, received = self._parse_ping(output, successful)
         rtt, jitter, loss, available = self.metric_windows[path_id].update(
             successful=successful, rtt_ms=rtt_sample, loss_pct_sample=loss_sample,
+            transmitted_packets=transmitted, received_packets=received,
             counter_timestamp=now, interface_bytes=self._interface_bytes(f"{self.site}-{transport}"),
         )
         record = {
@@ -133,13 +151,14 @@ class LocalFailoverRuntime:
             "transport_cost": self.config.transports[transport].cost,
             "measured_at_monotonic": now, "measured_at": datetime.now(timezone.utc).isoformat(),
         }
-        self._measurements[path_id] = record
+        with self._measurement_lock:
+            self._measurements[path_id] = record
         return record
 
     def _probe(self, name: str) -> TunnelSample:
         item = self.interfaces[name]
         hub, transport = str(item["hub"]), self.transport_by_interface[name]
-        self.sequence += 1
+        sequence = self._next_sequence()
         now_wall, now_monotonic = time.time(), time.monotonic()
         link_up, _ = self._check(["ip", "link", "show", "dev", name, "up"])
         underlay_up, _ = self._check(["ping", "-I", f"{self.site}-{transport}", "-c", "1", "-W", "1", str(self.config.underlay_ip(hub, transport))])
@@ -148,7 +167,7 @@ class LocalFailoverRuntime:
         timestamps = [int(line.rsplit("\t", 1)[-1]) for line in output.splitlines() if "\t" in line and line.rsplit("\t", 1)[-1].isdigit()]
         age = now_wall - max(timestamps) if shown and timestamps and max(timestamps) else None
         return TunnelSample(
-            self.site, hub, transport, name, now_wall, now_monotonic, self.sequence,
+            self.site, hub, transport, name, now_wall, now_monotonic, sequence,
             "edge-local-active-probe", link_up, underlay_up, link_up,
             bool(metric["operationally_reachable"]), age,
             metric["rtt_ms"], metric["jitter_ms"], metric["loss_pct"],
@@ -176,31 +195,33 @@ class LocalFailoverRuntime:
             ))
         return targets
 
+    def _direct_target(self, transport: str) -> Target:
+        profile = self.config.transports[transport]
+        path_id, interface = f"direct-{transport}", f"{self.site}-{transport}"
+        mark = self.config.settings.marks.encode(
+            profile.route_slot, egress=EgressMode.DIRECT_INTERNET,
+        )
+        metric = self._measure(
+            path_id, interface, str(self.config.saas_ip), hub=None, transport=transport,
+            egress_mode=EgressMode.DIRECT_INTERNET, fwmark=mark,
+        )
+        reachable = bool(metric["operationally_reachable"])
+        return Target(
+            None, transport, interface, EgressMode.DIRECT_INTERNET,
+            TunnelState.HEALTHY if reachable else TunnelState.FAILED, None,
+            float(metric["rtt_ms"]) if metric.get("rtt_ms") is not None else None,
+            float(metric["jitter_ms"]) if metric.get("jitter_ms") is not None else None,
+            float(metric["loss_pct"]) if metric.get("loss_pct") is not None else None,
+            float(metric["estimated_available_bandwidth_mbps"]) if metric.get("estimated_available_bandwidth_mbps") is not None else None,
+            True, float(metric["measured_at_monotonic"]), profile.bandwidth_mbps, profile.cost,
+        )
+
     def _direct_targets(self) -> list[Target]:
-        targets: list[Target] = []
-        for transport in ("bb", "lte"):
-            profile = self.config.transports[transport]
-            if not profile.internet_capable:
-                continue
-            path_id, interface = f"direct-{transport}", f"{self.site}-{transport}"
-            mark = self.config.settings.marks.encode(
-                profile.route_slot, egress=EgressMode.DIRECT_INTERNET,
-            )
-            metric = self._measure(
-                path_id, interface, str(self.config.saas_ip), hub=None, transport=transport,
-                egress_mode=EgressMode.DIRECT_INTERNET, fwmark=mark,
-            )
-            reachable = bool(metric["operationally_reachable"])
-            targets.append(Target(
-                None, transport, interface, EgressMode.DIRECT_INTERNET,
-                TunnelState.HEALTHY if reachable else TunnelState.FAILED, None,
-                float(metric["rtt_ms"]) if metric.get("rtt_ms") is not None else None,
-                float(metric["jitter_ms"]) if metric.get("jitter_ms") is not None else None,
-                float(metric["loss_pct"]) if metric.get("loss_pct") is not None else None,
-                float(metric["estimated_available_bandwidth_mbps"]) if metric.get("estimated_available_bandwidth_mbps") is not None else None,
-                True, float(metric["measured_at_monotonic"]), profile.bandwidth_mbps, profile.cost,
-            ))
-        return targets
+        return [
+            self._direct_target(transport)
+            for transport in ("bb", "lte")
+            if self.config.transports[transport].internet_capable
+        ]
 
     def _selection_mark(self, target: Target) -> int:
         slot = self.config.transports[target.transport].route_slot
@@ -334,12 +355,32 @@ class LocalFailoverRuntime:
 
     def run_once(self) -> None:
         observed: dict[str, TunnelHealth] = {}
-        for name, machine in self.health.items():
-            try:
-                observed[name] = machine.observe(self._probe(name))
-            except StaleMeasurement:
-                observed[name] = machine.health
-        candidates = self._targets(observed) + self._direct_targets()
+        direct_transports = [
+            transport for transport in ("bb", "lte")
+            if self.config.transports[transport].internet_capable
+        ]
+        # Measure all paths in the same round. Serial probes exceeded the
+        # six-second freshness budget, so early paths were stale before the
+        # selector evaluated them.
+        with ThreadPoolExecutor(
+            max_workers=len(self.health) + len(direct_transports)
+        ) as executor:
+            overlay_futures = {
+                name: executor.submit(self._probe, name) for name in self.health
+            }
+            direct_futures = {
+                transport: executor.submit(self._direct_target, transport)
+                for transport in direct_transports
+            }
+            for name, machine in self.health.items():
+                try:
+                    observed[name] = machine.observe(overlay_futures[name].result())
+                except StaleMeasurement:
+                    observed[name] = machine.health
+            direct_targets = [
+                direct_futures[transport].result() for transport in direct_transports
+            ]
+        candidates = self._targets(observed) + direct_targets
         self._run_sla_selection(candidates)
         profile = self.config.sites[self.site]
         for slot in self.manager.slots:

@@ -210,6 +210,8 @@ class MetricWindow:
         counter_timestamp: float | None = None,
         interface_bytes: int | None = None,
         loss_pct_sample: float | None = None,
+        transmitted_packets: int | None = None,
+        received_packets: int | None = None,
     ) -> tuple[float | None, float | None, float, float | None]:
         alpha = self.tuning.ewma_alpha
         if successful and rtt_ms is not None:
@@ -219,10 +221,20 @@ class MetricWindow:
             self.jitter_ms = variation if self.jitter_ms is None else alpha * variation + (1 - alpha) * self.jitter_ms
             self._previous_rtt_sample = rtt_ms
 
-        sample_loss = loss_pct_sample if loss_pct_sample is not None else (0.0 if successful else 100.0)
-        self._loss_samples.append(min(100.0, max(0.0, sample_loss)))
+        if transmitted_packets is not None:
+            transmitted = max(0, int(transmitted_packets))
+            received = max(0, min(transmitted, int(received_packets or 0)))
+            # Preserve the packet denominator across probe rounds. Averaging
+            # percentages from three-packet batches quantizes one loss as
+            # 33.3%, which creates false SLA violations.
+            self._loss_samples.extend(
+                [0.0] * received + [100.0] * (transmitted - received)
+            )
+        else:
+            sample_loss = loss_pct_sample if loss_pct_sample is not None else (0.0 if successful else 100.0)
+            self._loss_samples.append(min(100.0, max(0.0, sample_loss)))
         self._loss_samples = self._loss_samples[-self.tuning.loss_window_samples:]
-        loss_pct = sum(self._loss_samples) / len(self._loss_samples)
+        loss_pct = sum(self._loss_samples) / len(self._loss_samples) if self._loss_samples else 100.0
 
         if counter_timestamp is not None and interface_bytes is not None:
             if self._last_counter is None:

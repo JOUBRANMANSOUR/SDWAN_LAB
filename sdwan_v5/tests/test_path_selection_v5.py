@@ -87,6 +87,18 @@ class PathSelectionTests(unittest.TestCase):
         third = window.update(successful=False, rtt_ms=None, loss_pct_sample=100)
         self.assertAlmostEqual(third[2], 100 / 3, places=3)
 
+    def test_metric_window_uses_packet_weighted_loss_samples(self) -> None:
+        window = MetricWindow(MeasurementTuning(2, 0.5, 6, 100), 50.0)
+        first = window.update(
+            successful=True, rtt_ms=20, transmitted_packets=10, received_packets=9
+        )
+        self.assertAlmostEqual(first[2], 10.0)
+        for _ in range(9):
+            current = window.update(
+                successful=True, rtt_ms=20, transmitted_packets=10, received_packets=10
+            )
+        self.assertAlmostEqual(current[2], 1.0)
+
     def test_policy_constraints_reject_wrong_egress_and_transport(self) -> None:
         selector = self.realtime_selector()
         decision = self.decide(selector, [

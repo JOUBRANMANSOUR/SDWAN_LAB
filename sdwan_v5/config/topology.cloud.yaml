@@ -44,7 +44,7 @@ measurement:
   interval_seconds: 2
   ewma_alpha: 0.3
   stale_after_seconds: 6
-  loss_window_samples: 10
+  loss_window_samples: 100
 
 application_slas:
   REALTIME_RTP:
